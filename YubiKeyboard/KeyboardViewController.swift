@@ -262,7 +262,8 @@ final class KeyboardViewController: UIInputViewController {
 
         let controls = UIStackView(arrangedSubviews: [
             makePickerControlsRow(),
-            makeTranslateSelectionButton()
+            makeTranslateSelectionButton(),
+            makePrivacyHintLabel()
         ])
         controls.axis = .vertical
         controls.alignment = .fill
@@ -356,6 +357,16 @@ final class KeyboardViewController: UIInputViewController {
         configureSpaceSpinner(in: button)
         spaceButton = button
         return button
+    }
+
+    private func makePrivacyHintLabel() -> UIView {
+        let label = UILabel()
+        label.text = "Translation uses Apple's privacy-preserving on-device model, or in some cases Private Cloud Compute."
+        label.font = Theme.hintFont
+        label.textColor = Theme.accent
+        label.textAlignment = .center
+        label.numberOfLines = 2
+        return label
     }
 
     private func outputLanguageMenu() -> UIMenu {
@@ -680,7 +691,7 @@ final class KeyboardViewController: UIInputViewController {
     private func configureSpaceSpinner(in space: UIButton) {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "translating"
+        label.text = "Translating"
         label.font = Theme.spaceFont
         label.textColor = Theme.mutedText
 

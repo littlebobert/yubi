@@ -23,7 +23,7 @@ struct ContentView: View {
                 .font(.largeTitle.bold())
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Select text in any app, switch to Yubi, choose an output language, then tap Translate.")
+            Text("Select text in any app, switch to Yubi, choose a language and tone, then tap Translate Selection.")
                 .font(.body)
                 .foregroundStyle(.secondary)
         }
@@ -45,7 +45,8 @@ struct ContentView: View {
             StepView(number: 1, text: "Tap the button above to open Yubi's Settings page.")
             StepView(number: 2, text: "If needed, go to General > Keyboard > Keyboards > Add New Keyboard.")
             StepView(number: 3, text: "Choose Yubi Keyboard.")
-            StepView(number: 4, text: "Use the globe key to switch to Yubi.")
+            StepView(number: 4, text: "Select text in any app, then use the globe key to switch to Yubi.")
+            StepView(number: 5, text: "Choose a language and tap Translate Selection.")
         }
     }
 
@@ -59,12 +60,12 @@ struct ContentView: View {
 
     private var notes: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Prototype notes", systemImage: "wand.and.stars")
+            Label("Privacy and translation", systemImage: "lock.shield")
                 .font(.title2.bold())
 
-            Text("Translation uses Apple's Foundation Models when available. Yubi does not request Full Access.")
+            Text("Translation uses Apple's privacy-preserving on-device model, or in some cases Private Cloud Compute. Yubi does not request Full Access.")
 
-            Text("Japanese is the default output language. The last language you choose stays selected.")
+            Text("Japanese is the default output language, with Polite as the default Japanese tone. Your last choices stay selected.")
                 .foregroundStyle(.secondary)
         }
         .font(.body)
