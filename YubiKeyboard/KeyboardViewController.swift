@@ -32,23 +32,116 @@ final class KeyboardViewController: UIInputViewController {
         case returnKey
     }
 
+    private enum OutputLanguage: String, CaseIterable {
+        case japanese
+        case korean
+        case chineseSimplified
+        case english
+        case spanish
+        case french
+        case german
+
+        private static let defaultsKey = "YubiOutputLanguage"
+
+        var displayName: String {
+            switch self {
+            case .japanese:
+                return "Japanese"
+            case .korean:
+                return "Korean"
+            case .chineseSimplified:
+                return "Chinese"
+            case .english:
+                return "English"
+            case .spanish:
+                return "Spanish"
+            case .french:
+                return "French"
+            case .german:
+                return "German"
+            }
+        }
+
+        var promptName: String {
+            switch self {
+            case .chineseSimplified:
+                return "Simplified Chinese"
+            default:
+                return displayName
+            }
+        }
+
+        static var persisted: OutputLanguage {
+            guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+                  let language = OutputLanguage(rawValue: rawValue)
+            else {
+                return .japanese
+            }
+
+            return language
+        }
+
+        func persist() {
+            UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        }
+    }
+
+    private enum JapaneseTone: String, CaseIterable {
+        case polite
+        case casual
+
+        private static let defaultsKey = "YubiJapaneseTone"
+
+        var displayName: String {
+            switch self {
+            case .polite:
+                return "Polite"
+            case .casual:
+                return "Casual"
+            }
+        }
+
+        var promptInstruction: String {
+            switch self {
+            case .polite:
+                return "polite Japanese using natural desu/masu form"
+            case .casual:
+                return "casual Japanese using natural plain form"
+            }
+        }
+
+        static var persisted: JapaneseTone {
+            guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+                  let tone = JapaneseTone(rawValue: rawValue)
+            else {
+                return .polite
+            }
+
+            return tone
+        }
+
+        func persist() {
+            UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        }
+    }
+
     fileprivate enum Theme {
         static let panelBackground = UIColor(red: 0.88, green: 0.89, blue: 0.92, alpha: 1.0)
         static let keyBackground = UIColor.white
-        static let controlBackground = UIColor(red: 0.78, green: 0.79, blue: 0.83, alpha: 1.0)
-        static let activeControlBackground = UIColor(red: 0.68, green: 0.69, blue: 0.74, alpha: 1.0)
+        static let controlBackground = UIColor(red: 0.68, green: 0.71, blue: 0.76, alpha: 1.0)
+        static let activeControlBackground = UIColor(red: 0.58, green: 0.61, blue: 0.66, alpha: 1.0)
         static let border = UIColor(red: 0.68, green: 0.69, blue: 0.74, alpha: 1.0)
         static let text = UIColor.black
         static let mutedText = UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1.0)
         static let accent = UIColor(red: 0.38, green: 0.40, blue: 0.44, alpha: 1.0)
-        static let keyShadow = UIColor(red: 0.52, green: 0.53, blue: 0.58, alpha: 1.0)
+        static let keyShadow = UIColor(red: 0.42, green: 0.44, blue: 0.49, alpha: 1.0)
 
-        static let letterFont = UIFont.monospacedSystemFont(ofSize: 23, weight: .regular)
-        static let controlFont = UIFont.monospacedSystemFont(ofSize: 20, weight: .medium)
-        static let edgeControlFont = UIFont.monospacedSystemFont(ofSize: 24, weight: .medium)
-        static let modeFont = UIFont.monospacedSystemFont(ofSize: 17, weight: .medium)
-        static let spaceFont = UIFont.monospacedSystemFont(ofSize: 16, weight: .medium)
-        static let suggestionFont = UIFont.systemFont(ofSize: 15, weight: .medium)
+        static let letterFont = UIFont.systemFont(ofSize: 23, weight: .regular)
+        static let controlFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        static let edgeControlFont = UIFont.systemFont(ofSize: 24, weight: .medium)
+        static let modeFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        static let spaceFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        static let suggestionFont = UIFont.systemFont(ofSize: 13, weight: .regular)
         static let hintFont = UIFont.systemFont(ofSize: 10, weight: .regular)
 
         static let systemUtilityKeyWidth: CGFloat = 44
@@ -70,6 +163,7 @@ final class KeyboardViewController: UIInputViewController {
     private var suggestionButton: UIButton?
     private var shiftButton: UIButton?
     private var modeButton: UIButton?
+    private var toneButton: UIButton?
     private var spaceButton: UIButton?
     private var spaceSpinner: UIActivityIndicatorView?
     private var spaceTranslationStack: UIStackView?
@@ -83,13 +177,14 @@ final class KeyboardViewController: UIInputViewController {
     private var pendingAutocorrection: AppliedAutocorrection?
     private var suggestionBarState: SuggestionBarState?
     private var autocorrectionHistory: [AppliedAutocorrection] = []
+    private var outputLanguage = OutputLanguage.persisted
+    private var japaneseTone = JapaneseTone.persisted
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
         configureRootView()
         renderKeyboard()
-        loadSupplementaryLexicon()
         keyFeedback.prepare()
     }
 
@@ -100,24 +195,24 @@ final class KeyboardViewController: UIInputViewController {
 
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        refreshAutocorrectionSuggestion()
+        refreshTranslationControls()
     }
 
     override func selectionDidChange(_ textInput: UITextInput?) {
         super.selectionDidChange(textInput)
-        refreshSpaceKey()
+        refreshTranslationControls()
     }
 
     private func configureRootView() {
         view.backgroundColor = Theme.panelBackground
 
         rootStack.axis = .vertical
-        rootStack.spacing = 4
+        rootStack.spacing = 8
         rootStack.alignment = .fill
         rootStack.distribution = .fill
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         rootStack.isLayoutMarginsRelativeArrangement = true
-        rootStack.layoutMargins = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        rootStack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
 
         view.addSubview(rootStack)
 
@@ -151,44 +246,152 @@ final class KeyboardViewController: UIInputViewController {
         suggestionButton = nil
         shiftButton = nil
         modeButton = nil
+        toneButton = nil
         spaceButton = nil
         spaceSpinner = nil
         spaceTranslationStack = nil
 
-        switch mode {
-        case .letters:
-            rootStack.addArrangedSubview(makeTopCaptureBand())
-            rootStack.addArrangedSubview(makeLetterRow(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"], sideInset: 0, topHitOutset: 18, tracksTopRow: true))
-            rootStack.addArrangedSubview(makeLetterRow(["a", "s", "d", "f", "g", "h", "j", "k", "l"], sideInset: Theme.homeRowInset))
-            rootStack.addArrangedSubview(makeZRow())
-            rootStack.addArrangedSubview(makeBottomRow(modeTitle: "123"))
+        rootStack.addArrangedSubview(makeTranslatorPanel())
+        refreshTranslationControls()
+    }
 
-        case .symbols:
-            rootStack.addArrangedSubview(makeTopCaptureBand())
-            rootStack.addArrangedSubview(makeSymbolRow(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], sideInset: 0, tracksTopRow: true))
-            rootStack.addArrangedSubview(makeSymbolRow(["-", "/", ":", ";", "(", ")", "$", "&", "@", "\""], sideInset: 0))
-            rootStack.addArrangedSubview(makeSymbolZRow([".", ",", "?", "!", "'"]))
-            rootStack.addArrangedSubview(makeBottomRow(modeTitle: "ABC"))
+    private func makeTranslatorPanel() -> UIView {
+        let panel = UIView()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.layoutMargins = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
 
-        case .moreSymbols:
-            rootStack.addArrangedSubview(makeTopCaptureBand())
-            rootStack.addArrangedSubview(makeSymbolRow(["[", "]", "{", "}", "#", "%", "^", "*", "+", "="], sideInset: 0, tracksTopRow: true))
-            rootStack.addArrangedSubview(makeSymbolRow(["_", "\\", "|", "~", "<", ">", "€", "£", "¥", "•"], sideInset: 0))
-            rootStack.addArrangedSubview(makeSymbolZRow([".", ",", "?", "!", "'"], modeTitle: "123", modeAction: .toggleMoreSymbols))
-            rootStack.addArrangedSubview(makeBottomRow(modeTitle: "ABC"))
+        let controls = UIStackView(arrangedSubviews: [
+            makePickerControlsRow(),
+            makeTranslateSelectionButton()
+        ])
+        controls.axis = .vertical
+        controls.alignment = .fill
+        controls.distribution = .fill
+        controls.spacing = 10
+        controls.translatesAutoresizingMaskIntoConstraints = false
 
-        case .emoji:
-            rootStack.addArrangedSubview(makeTopCaptureBand())
-            rootStack.addArrangedSubview(makeEmojiRow(["😀", "😅", "😂", "🙂", "😍", "😭", "😎", "🤔"], tracksTopRow: true))
-            rootStack.addArrangedSubview(makeEmojiRow(["👍", "🙏", "👏", "🔥", "✨", "❤️", "💀", "🎉"]))
-            rootStack.addArrangedSubview(makeEmojiDeleteRow(["☕️", "🍕", "✈️", "🏠", "💬", "✅", "⭐️"]))
-            rootStack.addArrangedSubview(makeBottomRow(modeTitle: "ABC"))
+        panel.addSubview(controls)
+        NSLayoutConstraint.activate([
+            controls.leadingAnchor.constraint(equalTo: panel.layoutMarginsGuide.leadingAnchor),
+            controls.trailingAnchor.constraint(equalTo: panel.layoutMarginsGuide.trailingAnchor),
+            controls.centerYAnchor.constraint(equalTo: panel.centerYAnchor)
+        ])
+
+        return panel
+    }
+
+    private func makePickerControlsRow() -> UIView {
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(equalToConstant: 66).isActive = true
+
+        var columns = [makeLanguagePickerColumn()]
+        if outputLanguage == .japanese {
+            columns.append(makeJapaneseToneColumn())
         }
 
-        refreshLetterLabels()
-        refreshModeKeys()
-        refreshSpaceKey()
-        refreshAutocorrectionSuggestion()
+        let stack = UIStackView(arrangedSubviews: columns)
+        stack.axis = .horizontal
+        stack.alignment = .fill
+        stack.distribution = .fill
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        row.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: row.centerXAnchor),
+            stack.topAnchor.constraint(equalTo: row.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: row.bottomAnchor)
+        ])
+
+        return row
+    }
+
+    private func makeLanguagePickerColumn() -> UIView {
+        let languageButton = ExpandedHitButton(type: .system)
+        configureButton(languageButton, title: outputLanguage.displayName, style: .space)
+        languageButton.showsMenuAsPrimaryAction = true
+        languageButton.menu = outputLanguageMenu()
+        modeButton = languageButton
+
+        return makePickerColumn(labelText: "Language", button: languageButton)
+    }
+
+    private func makeJapaneseToneColumn() -> UIView {
+        let button = ExpandedHitButton(type: .system)
+        configureButton(button, title: japaneseTone.displayName, style: .space)
+        button.showsMenuAsPrimaryAction = true
+        button.menu = japaneseToneMenu()
+        toneButton = button
+
+        return makePickerColumn(labelText: "Tone", button: button)
+    }
+
+    private func makePickerColumn(labelText: String, button: UIButton) -> UIView {
+        let label = UILabel()
+        label.text = labelText
+        label.font = Theme.suggestionFont
+        label.textColor = Theme.mutedText
+        label.textAlignment = .center
+
+        let column = UIStackView(arrangedSubviews: [label, button])
+        column.axis = .vertical
+        column.alignment = .fill
+        column.distribution = .fill
+        column.spacing = 4
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.widthAnchor.constraint(equalToConstant: 148).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 46).isActive = true
+
+        return column
+    }
+
+    private func makeTranslateSelectionButton() -> UIView {
+        let button = ExpandedHitButton(type: .system)
+        configureButton(button, title: "", style: .space)
+        button.heightAnchor.constraint(equalToConstant: 46).isActive = true
+        button.addAction(UIAction { [weak self] _ in
+            self?.handleTranslateSelectionTap()
+        }, for: .touchUpInside)
+        configureSpaceSpinner(in: button)
+        spaceButton = button
+        return button
+    }
+
+    private func outputLanguageMenu() -> UIMenu {
+        UIMenu(children: OutputLanguage.allCases.map { language in
+            UIAction(
+                title: language.displayName,
+                state: language == outputLanguage ? .on : .off
+            ) { [weak self] _ in
+                self?.setOutputLanguage(language)
+            }
+        })
+    }
+
+    private func japaneseToneMenu() -> UIMenu {
+        UIMenu(children: JapaneseTone.allCases.map { tone in
+            UIAction(
+                title: tone.displayName,
+                state: tone == japaneseTone ? .on : .off
+            ) { [weak self] _ in
+                self?.setJapaneseTone(tone)
+            }
+        })
+    }
+
+    private func setOutputLanguage(_ language: OutputLanguage) {
+        outputLanguage = language
+        outputLanguage.persist()
+        renderKeyboard()
+    }
+
+    private func setJapaneseTone(_ tone: JapaneseTone) {
+        japaneseTone = tone
+        japaneseTone.persist()
+        toneButton?.setTitle(tone.displayName, for: .normal)
+        toneButton?.menu = japaneseToneMenu()
+        refreshTranslationControls()
     }
 
     private func makeTopCaptureBand() -> UIView {
@@ -491,7 +694,7 @@ final class KeyboardViewController: UIInputViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
         stack.alignment = .center
-        stack.spacing = 6
+        stack.spacing = 3
         stack.isHidden = true
         stack.isUserInteractionEnabled = false
 
@@ -607,14 +810,43 @@ final class KeyboardViewController: UIInputViewController {
             guard let self else { return }
 
             do {
-                let translation = try await self.translateToJapanese(selectedText)
+                let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
                 self.textDocumentProxy.insertText(translation)
             } catch {
-                self.spaceButton?.setTitle("日本語 unavailable", for: .normal)
+                self.spaceButton?.setTitle("\(self.outputLanguage.displayName) unavailable", for: .normal)
             }
 
             self.isTranslatingSelection = false
-            self.refreshSpaceKey(afterDelay: 0.8)
+            self.refreshTranslationControls(afterDelay: 0.8)
+        }
+    }
+
+    private func handleTranslateSelectionTap() {
+        guard !isTranslatingSelection,
+              let selectedText = selectedTextForTranslation
+        else {
+            return
+        }
+
+        let targetLanguage = outputLanguage
+        let targetTone = japaneseTone
+        isTranslatingSelection = true
+        currentWordTouches.removeAll()
+        performKeyFeedback()
+        refreshTranslationControls()
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
+                self.textDocumentProxy.insertText(translation)
+            } catch {
+                self.spaceButton?.setTitle("\(targetLanguage.displayName) unavailable", for: .normal)
+            }
+
+            self.isTranslatingSelection = false
+            self.refreshTranslationControls(afterDelay: 0.8)
         }
     }
 
@@ -629,20 +861,30 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func refreshSpaceKey(afterDelay delay: TimeInterval = 0) {
+        refreshTranslationControls(afterDelay: delay)
+    }
+
+    private func refreshTranslationControls(afterDelay delay: TimeInterval = 0) {
         let update = { [weak self] in
             guard let self else { return }
 
             if self.isTranslatingSelection {
                 self.spaceButton?.setTitle("", for: .normal)
+                self.spaceButton?.isEnabled = false
+                self.spaceButton?.alpha = 1
                 self.spaceTranslationStack?.isHidden = false
                 self.spaceSpinner?.startAnimating()
             } else if self.selectedTextForTranslation != nil {
                 self.spaceTranslationStack?.isHidden = true
-                self.spaceButton?.setTitle("hold for 日本語", for: .normal)
+                self.spaceButton?.setTitle("Translate Selection", for: .normal)
+                self.spaceButton?.isEnabled = true
+                self.spaceButton?.alpha = 1
                 self.spaceSpinner?.stopAnimating()
             } else {
                 self.spaceTranslationStack?.isHidden = true
-                self.spaceButton?.setTitle("space", for: .normal)
+                self.spaceButton?.setTitle("Select text to translate", for: .normal)
+                self.spaceButton?.isEnabled = false
+                self.spaceButton?.alpha = 0.62
                 self.spaceSpinner?.stopAnimating()
             }
         }
@@ -654,7 +896,7 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func translateToJapanese(_ text: String) async throws -> String {
+    private func translate(_ text: String, to targetLanguage: OutputLanguage, japaneseTone: JapaneseTone) async throws -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
             let model = SystemLanguageModel.default
@@ -662,12 +904,13 @@ final class KeyboardViewController: UIInputViewController {
                 throw TranslationError.modelUnavailable
             }
 
+            let toneInstruction = targetLanguage == .japanese ? " Use \(japaneseTone.promptInstruction)." : ""
             let session = LanguageModelSession(
                 model: model,
-                instructions: "Translate user-selected text into natural Japanese. Return only the Japanese translation, with no explanation, labels, or quotation marks."
+                instructions: "Translate user-selected text into natural \(targetLanguage.promptName).\(toneInstruction) Return only the translation, with no explanation, labels, or quotation marks."
             )
             let response = try await session.respond(to: """
-            Translate this text to Japanese. Preserve names, numbers, URLs, and line breaks where reasonable. Return only the translation:
+            Translate this text to \(targetLanguage.promptName).\(toneInstruction) Preserve names, numbers, URLs, and line breaks where reasonable. Return only the translation:
 
             \(text)
             """)
@@ -698,16 +941,18 @@ final class KeyboardViewController: UIInputViewController {
     private func configureButton(_ button: UIButton, title: String, subtitle: String? = nil, style: KeyStyle) {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.clipsToBounds = false
-        button.layer.cornerRadius = 5
+        button.layer.cornerRadius = 6
+        button.layer.cornerCurve = .continuous
         button.layer.borderColor = Theme.border.cgColor
-        button.layer.borderWidth = 1
+        button.layer.borderWidth = 0
         button.layer.shadowColor = Theme.keyShadow.cgColor
-        button.layer.shadowOpacity = 0.18
+        button.layer.shadowOpacity = 0.28
         button.layer.shadowRadius = 0
-        button.layer.shadowOffset = CGSize(width: 0, height: 1)
+        button.layer.shadowOffset = CGSize(width: 0, height: 1.2)
         button.titleLabel?.textAlignment = .center
         button.titleLabel?.numberOfLines = subtitle == nil ? 1 : 2
         button.tintColor = Theme.text
+        button.contentHorizontalAlignment = .center
 
         if let subtitle {
             let titleText = NSMutableAttributedString(
@@ -1269,6 +1514,7 @@ private final class Autocorrector {
         "theyre": "they're",
         "thier": "their",
         "thsi": "this",
+        "tjis": "this",
         "whta": "what",
         "wierd": "weird",
         "youre": "you're"

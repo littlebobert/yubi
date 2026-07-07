@@ -19,11 +19,11 @@ struct ContentView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Translate selected text to Japanese.")
+            Text("Translate selected text.")
                 .font(.largeTitle.bold())
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Select text in any app, switch to Yubi, then hold the spacebar when it says “hold for 日本語”.")
+            Text("Select text in any app, switch to Yubi, choose an output language, then tap Translate.")
                 .font(.body)
                 .foregroundStyle(.secondary)
         }
@@ -62,9 +62,9 @@ struct ContentView: View {
             Label("Prototype notes", systemImage: "wand.and.stars")
                 .font(.title2.bold())
 
-            Text("Translation uses Apple's on-device Foundation Models when available. Yubi does not request Full Access.")
+            Text("Translation uses Apple's Foundation Models when available. Yubi does not request Full Access.")
 
-            Text("Autocorrect is local and runs when you press space or punctuation.")
+            Text("Japanese is the default output language. The last language you choose stays selected.")
                 .foregroundStyle(.secondary)
         }
         .font(.body)
