@@ -1710,7 +1710,10 @@ private struct AnalysisDetailView: View {
     }
 
     private func markdownAttributedString(from text: String) -> AttributedString {
-        (try? AttributedString(markdown: text)) ?? AttributedString(text)
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 
     private func refreshAnalysis() {
