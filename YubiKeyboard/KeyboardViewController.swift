@@ -318,6 +318,7 @@ final class KeyboardViewController: UIInputViewController {
     private var shiftButton: UIButton?
     private var modeButton: UIButton?
     private var toneButton: UIButton?
+    private var deleteActionButton: UIButton?
     private var spaceButton: UIButton?
     private var spaceSpinner: UIActivityIndicatorView?
     private var spaceTranslationStack: UIStackView?
@@ -401,6 +402,7 @@ final class KeyboardViewController: UIInputViewController {
         shiftButton = nil
         modeButton = nil
         toneButton = nil
+        deleteActionButton = nil
         spaceButton = nil
         spaceSpinner = nil
         spaceTranslationStack = nil
@@ -416,7 +418,7 @@ final class KeyboardViewController: UIInputViewController {
 
         let controls = UIStackView(arrangedSubviews: [
             makePickerControlsRow(),
-            makeTranslateSelectionButton(),
+            makeTranslationActionRow(),
             makePrivacyHintLabel()
         ])
         controls.axis = .vertical
@@ -501,16 +503,34 @@ final class KeyboardViewController: UIInputViewController {
         return column
     }
 
-    private func makeTranslateSelectionButton() -> UIView {
+    private func makeTranslationActionRow() -> UIView {
+        let row = makeHorizontalRow(height: 46)
+        row.spacing = 8
+
         let button = ExpandedHitButton(type: .system)
         configureButton(button, title: "", style: .space)
-        button.heightAnchor.constraint(equalToConstant: 46).isActive = true
         button.addAction(UIAction { [weak self] _ in
             self?.handleTranslateSelectionTap()
         }, for: .touchUpInside)
         configureSpaceSpinner(in: button)
         spaceButton = button
-        return button
+
+        let deleteButton = DeleteKeyButton(type: .system)
+        configureButton(deleteButton, title: "⌫", style: .space)
+        deleteButton.titleLabel?.font = Theme.edgeControlFont
+        deleteButton.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        deleteButton.onPressBegan = { [weak self] in
+            guard let self, !self.isTranslatingSelection else { return }
+            self.beginDeletePress()
+        }
+        deleteButton.onPressEnded = { [weak self] in
+            self?.stopDeleteRepeat()
+        }
+        deleteActionButton = deleteButton
+
+        row.addArrangedSubview(button)
+        row.addArrangedSubview(deleteButton)
+        return row
     }
 
     private func makePrivacyHintLabel() -> UIView {
@@ -987,9 +1007,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func handleTranslateSelectionTap() {
-        guard !isTranslatingSelection,
-              let selectedText = selectedTextForTranslation
-        else {
+        guard !isTranslatingSelection else {
+            return
+        }
+
+        guard let selectedText = selectedTextForTranslation else {
             return
         }
 
@@ -1033,13 +1055,18 @@ final class KeyboardViewController: UIInputViewController {
         let update = { [weak self] in
             guard let self else { return }
 
+            let selectedText = self.selectedTextForTranslation
+
+            self.deleteActionButton?.isEnabled = !self.isTranslatingSelection
+            self.deleteActionButton?.alpha = self.isTranslatingSelection ? 0.62 : 1
+
             if self.isTranslatingSelection {
                 self.spaceButton?.setTitle("", for: .normal)
                 self.spaceButton?.isEnabled = false
                 self.spaceButton?.alpha = 1
                 self.spaceTranslationStack?.isHidden = false
                 self.spaceSpinner?.startAnimating()
-            } else if self.selectedTextForTranslation != nil {
+            } else if selectedText != nil {
                 self.spaceTranslationStack?.isHidden = true
                 self.spaceButton?.setTitle(KeyboardCopy.translateSelection, for: .normal)
                 self.spaceButton?.isEnabled = true
