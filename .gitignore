@@ -1,6 +1,7 @@
 build/
 DerivedData/
-*.xcuserdata/
+xcuserdata/
+*.xcuserdatad/
 *.xcuserstate
 .venv/
 
