@@ -1,5 +1,11 @@
 import AudioToolbox
+import os
 import UIKit
+
+private let keyboardTranslationLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "YubiKeyboard",
+    category: "Translation"
+)
 
 final class KeyboardViewController: UIInputViewController {
     private enum KeyboardMode {
@@ -199,14 +205,33 @@ final class KeyboardViewController: UIInputViewController {
             localized(en: "Translating", ja: "翻訳中", zhHans: "正在翻译", zhHant: "正在翻譯", ko: "번역 중")
         }
 
-        static var privacyHint: String {
-            localized(
-                en: "Translation uses Apple's privacy-preserving on-device model, or in some cases Private Cloud Compute.",
-                ja: "翻訳にはAppleのプライバシー保護型オンデバイスモデル、またはPrivate Cloud Computeを使用します。",
-                zhHans: "翻译使用 Apple 保护隐私的设备端模型，某些情况下会使用 Private Cloud Compute。",
-                zhHant: "翻譯使用 Apple 保護隱私的裝置端模型，某些情況下會使用 Private Cloud Compute。",
-                ko: "번역에는 Apple의 개인정보 보호 온디바이스 모델 또는 Private Cloud Compute를 사용합니다."
-            )
+        static func privacyHint(for backend: AIBackend) -> String {
+            switch backend {
+            case .apple:
+                return localized(
+                    en: "Translation uses Apple's privacy-preserving on-device model when available.",
+                    ja: "翻訳には、利用可能な場合Appleのプライバシー保護型オンデバイスモデルを使用します。",
+                    zhHans: "翻译会在可用时使用 Apple 保护隐私的设备端模型。",
+                    zhHant: "翻譯會在可用時使用 Apple 保護隱私的裝置端模型。",
+                    ko: "번역에는 가능한 경우 Apple의 개인정보 보호 온디바이스 모델을 사용합니다."
+                )
+            case .openAI:
+                return localized(
+                    en: "Translation sends selected text to OpenAI using your API key.",
+                    ja: "翻訳では、選択したテキストをあなたのAPIキーでOpenAIに送信します。",
+                    zhHans: "翻译会使用你的 API 密钥将所选文本发送到 OpenAI。",
+                    zhHant: "翻譯會使用你的 API 金鑰將選取文字傳送到 OpenAI。",
+                    ko: "번역은 선택한 텍스트를 사용자의 API 키로 OpenAI에 보냅니다."
+                )
+            case .claudeFable:
+                return localized(
+                    en: "Translation sends selected text to Claude Fable 5 using your API key.",
+                    ja: "翻訳では、選択したテキストをあなたのAPIキーでClaude Fable 5に送信します。",
+                    zhHans: "翻译会使用你的 API 密钥将所选文本发送到 Claude Fable 5。",
+                    zhHant: "翻譯會使用你的 API 金鑰將選取文字傳送到 Claude Fable 5。",
+                    ko: "번역은 선택한 텍스트를 사용자의 API 키로 Claude Fable 5에 보냅니다."
+                )
+            }
         }
 
         static var japanese: String {
@@ -260,6 +285,18 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
 
+        static var allowFullAccess: String {
+            localized(en: "Allow Full Access", ja: "フルアクセスを許可", zhHans: "允许完全访问", zhHant: "允許完整取用", ko: "전체 접근 허용")
+        }
+
+        static var addAPIKey: String {
+            localized(en: "Add API key in Yubi", ja: "YubiでAPIキーを追加", zhHans: "在 Yubi 中添加 API 密钥", zhHant: "在 Yubi 中加入 API 金鑰", ko: "Yubi에서 API 키 추가")
+        }
+
+        static var translationFailed: String {
+            localized(en: "Translation failed", ja: "翻訳に失敗", zhHans: "翻译失败", zhHant: "翻譯失敗", ko: "번역 실패")
+        }
+
         private static func localized(en: String, ja: String, zhHans: String, zhHant: String, ko: String) -> String {
             switch InterfaceLanguage.current {
             case .english:
@@ -299,6 +336,7 @@ final class KeyboardViewController: UIInputViewController {
         static let systemReturnKeyWidth: CGFloat = 96
         static let homeRowInset: CGFloat = 24
         static let zRowInset: CGFloat = 64
+        static let standardKeyboardHeight: CGFloat = 200
     }
 
     private let autocorrector = Autocorrector()
@@ -315,6 +353,7 @@ final class KeyboardViewController: UIInputViewController {
     private var shiftButton: UIButton?
     private var modeButton: UIButton?
     private var toneButton: UIButton?
+    private var privacyHintLabel: UILabel?
     private var deleteActionButton: UIButton?
     private var spaceButton: UIButton?
     private var spaceSpinner: UIActivityIndicatorView?
@@ -355,6 +394,11 @@ final class KeyboardViewController: UIInputViewController {
         refreshTranslationControls()
     }
 
+    override func updateViewConstraints() {
+        super.updateViewConstraints()
+        heightConstraint?.constant = Theme.standardKeyboardHeight
+    }
+
     private func configureRootView() {
         view.backgroundColor = Theme.panelBackground
 
@@ -375,7 +419,7 @@ final class KeyboardViewController: UIInputViewController {
             rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
 
-        let heightConstraint = view.heightAnchor.constraint(equalToConstant: 248)
+        let heightConstraint = view.heightAnchor.constraint(equalToConstant: Theme.standardKeyboardHeight)
         heightConstraint.priority = .defaultHigh
         heightConstraint.isActive = true
         self.heightConstraint = heightConstraint
@@ -532,11 +576,12 @@ final class KeyboardViewController: UIInputViewController {
 
     private func makePrivacyHintLabel() -> UIView {
         let label = UILabel()
-        label.text = KeyboardCopy.privacyHint
+        label.text = KeyboardCopy.privacyHint(for: AIBackendSettings.selectedBackend)
         label.font = Theme.hintFont
         label.textColor = Theme.accent
         label.textAlignment = .center
         label.numberOfLines = 2
+        privacyHintLabel = label
         return label
     }
 
@@ -1001,7 +1046,8 @@ final class KeyboardViewController: UIInputViewController {
                     japaneseTone: self.japaneseTone
                 )
             } catch {
-                self.spaceButton?.setTitle(KeyboardCopy.unavailable(self.outputLanguage.displayName), for: .normal)
+                keyboardTranslationLogger.error("Long-press translation failed: \(String(describing: error), privacy: .public)")
+                self.spaceButton?.setTitle(self.translationErrorTitle(error, targetLanguage: self.outputLanguage), for: .normal)
             }
 
             self.isTranslatingSelection = false
@@ -1038,7 +1084,8 @@ final class KeyboardViewController: UIInputViewController {
                     japaneseTone: targetTone
                 )
             } catch {
-                self.spaceButton?.setTitle(KeyboardCopy.unavailable(targetLanguage.displayName), for: .normal)
+                keyboardTranslationLogger.error("Selection translation failed: \(String(describing: error), privacy: .public)")
+                self.spaceButton?.setTitle(self.translationErrorTitle(error, targetLanguage: targetLanguage), for: .normal)
             }
 
             self.isTranslatingSelection = false
@@ -1081,6 +1128,8 @@ final class KeyboardViewController: UIInputViewController {
 
             let selectedText = self.selectedTextForTranslation
 
+            self.privacyHintLabel?.text = KeyboardCopy.privacyHint(for: AIBackendSettings.selectedBackend)
+
             self.deleteActionButton?.isEnabled = !self.isTranslatingSelection
             self.deleteActionButton?.alpha = self.isTranslatingSelection ? 0.62 : 1
 
@@ -1113,11 +1162,58 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func translate(_ text: String, to targetLanguage: OutputLanguage, japaneseTone: JapaneseTone) async throws -> String {
-        try await AIBackendClient.translate(
+        try validateBackendAvailability()
+
+        return try await AIBackendClient.translate(
             text,
             targetLanguage: targetLanguage.promptName,
             toneInstruction: targetLanguage == .japanese ? japaneseTone.promptInstruction : nil
         )
+    }
+
+    private func validateBackendAvailability() throws {
+        switch AIBackendSettings.selectedBackend {
+        case .apple:
+            return
+        case .openAI:
+            guard hasFullAccess else {
+                throw KeyboardTranslationError.fullAccessRequired
+            }
+
+            guard !AIBackendSettings.openAIAPIKey.isEmpty else {
+                throw KeyboardTranslationError.missingAPIKey
+            }
+        case .claudeFable:
+            guard hasFullAccess else {
+                throw KeyboardTranslationError.fullAccessRequired
+            }
+
+            guard !AIBackendSettings.claudeAPIKey.isEmpty else {
+                throw KeyboardTranslationError.missingAPIKey
+            }
+        }
+    }
+
+    private func translationErrorTitle(_ error: Error, targetLanguage: OutputLanguage) -> String {
+        if let keyboardError = error as? KeyboardTranslationError {
+            switch keyboardError {
+            case .fullAccessRequired:
+                return KeyboardCopy.allowFullAccess
+            case .missingAPIKey:
+                return KeyboardCopy.addAPIKey
+            }
+        }
+
+        if let aiError = error as? AIBackendError {
+            switch aiError {
+            case .missingAPIKey:
+                return KeyboardCopy.addAPIKey
+            default:
+                return KeyboardCopy.translationFailed
+            }
+        }
+
+        return KeyboardCopy.unavailable(targetLanguage.displayName)
     }
 
     private func configureButton(_ button: UIButton, title: String, subtitle: String? = nil, style: KeyStyle) {
@@ -1587,6 +1683,11 @@ private struct AppliedAutocorrection: Equatable {
 private enum SuggestionBarState {
     case pending(AppliedAutocorrection)
     case revert(AppliedAutocorrection)
+}
+
+private enum KeyboardTranslationError: Error {
+    case fullAccessRequired
+    case missingAPIKey
 }
 
 private final class TopRowHitProxyView: UIView {
