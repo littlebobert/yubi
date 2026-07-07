@@ -1,7 +1,4 @@
 import AudioToolbox
-#if canImport(FoundationModels)
-import FoundationModels
-#endif
 import UIKit
 
 final class KeyboardViewController: UIInputViewController {
@@ -997,6 +994,12 @@ final class KeyboardViewController: UIInputViewController {
             do {
                 let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
                 self.textDocumentProxy.insertText(translation)
+                self.saveTextEditHistory(
+                    sourceText: selectedText,
+                    translatedText: translation,
+                    targetLanguage: self.outputLanguage,
+                    japaneseTone: self.japaneseTone
+                )
             } catch {
                 self.spaceButton?.setTitle(KeyboardCopy.unavailable(self.outputLanguage.displayName), for: .normal)
             }
@@ -1028,6 +1031,12 @@ final class KeyboardViewController: UIInputViewController {
             do {
                 let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
                 self.textDocumentProxy.insertText(translation)
+                self.saveTextEditHistory(
+                    sourceText: selectedText,
+                    translatedText: translation,
+                    targetLanguage: targetLanguage,
+                    japaneseTone: targetTone
+                )
             } catch {
                 self.spaceButton?.setTitle(KeyboardCopy.unavailable(targetLanguage.displayName), for: .normal)
             }
@@ -1035,6 +1044,21 @@ final class KeyboardViewController: UIInputViewController {
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
         }
+    }
+
+    private func saveTextEditHistory(
+        sourceText: String,
+        translatedText: String,
+        targetLanguage: OutputLanguage,
+        japaneseTone: JapaneseTone
+    ) {
+        TextEditHistoryStore.save(TextEditHistoryItem(
+            date: Date(),
+            sourceText: sourceText,
+            translatedText: translatedText,
+            targetLanguage: targetLanguage.displayName,
+            tone: targetLanguage == .japanese ? japaneseTone.displayName : nil
+        ))
     }
 
     private var selectedTextForTranslation: String? {
@@ -1089,45 +1113,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func translate(_ text: String, to targetLanguage: OutputLanguage, japaneseTone: JapaneseTone) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            let model = SystemLanguageModel.default
-            guard model.isAvailable else {
-                throw TranslationError.modelUnavailable
-            }
-
-            let toneInstruction = targetLanguage == .japanese ? " Use \(japaneseTone.promptInstruction)." : ""
-            let session = LanguageModelSession(
-                model: model,
-                instructions: "Detect the source language and translate user-selected text into natural \(targetLanguage.promptName).\(toneInstruction) Return only the translation, with no explanation, labels, or quotation marks."
-            )
-            let response = try await session.respond(to: """
-            Detect the source language and translate this text to \(targetLanguage.promptName).\(toneInstruction) Preserve names, numbers, URLs, and line breaks where reasonable. Return only the translation:
-
-            \(text)
-            """)
-            let translation = cleanedModelOutput(response.content)
-
-            guard !translation.isEmpty else {
-                throw TranslationError.emptyResponse
-            }
-
-            return translation
-        }
-        #endif
-
-        throw TranslationError.modelUnavailable
-    }
-
-    private func cleanedModelOutput(_ output: String) -> String {
-        var cleaned = output.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if cleaned.hasPrefix("\""), cleaned.hasSuffix("\""), cleaned.count >= 2 {
-            cleaned.removeFirst()
-            cleaned.removeLast()
-        }
-
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await AIBackendClient.translate(
+            text,
+            targetLanguage: targetLanguage.promptName,
+            toneInstruction: targetLanguage == .japanese ? japaneseTone.promptInstruction : nil
+        )
     }
 
     private func configureButton(_ button: UIButton, title: String, subtitle: String? = nil, style: KeyStyle) {
@@ -1597,11 +1587,6 @@ private struct AppliedAutocorrection: Equatable {
 private enum SuggestionBarState {
     case pending(AppliedAutocorrection)
     case revert(AppliedAutocorrection)
-}
-
-private enum TranslationError: Error {
-    case modelUnavailable
-    case emptyResponse
 }
 
 private final class TopRowHitProxyView: UIView {
