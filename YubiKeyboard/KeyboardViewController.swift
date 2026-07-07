@@ -46,11 +46,30 @@ final class KeyboardViewController: UIInputViewController {
         var displayName: String {
             switch self {
             case .japanese:
+                return KeyboardCopy.japanese
+            case .korean:
+                return KeyboardCopy.korean
+            case .chineseSimplified:
+                return KeyboardCopy.chinese
+            case .english:
+                return KeyboardCopy.english
+            case .spanish:
+                return KeyboardCopy.spanish
+            case .french:
+                return KeyboardCopy.french
+            case .german:
+                return KeyboardCopy.german
+            }
+        }
+
+        var promptName: String {
+            switch self {
+            case .japanese:
                 return "Japanese"
             case .korean:
                 return "Korean"
             case .chineseSimplified:
-                return "Chinese"
+                return "Simplified Chinese"
             case .english:
                 return "English"
             case .spanish:
@@ -62,20 +81,11 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
 
-        var promptName: String {
-            switch self {
-            case .chineseSimplified:
-                return "Simplified Chinese"
-            default:
-                return displayName
-            }
-        }
-
         static var persisted: OutputLanguage {
             guard let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
                   let language = OutputLanguage(rawValue: rawValue)
             else {
-                return .japanese
+                return defaultLanguage
             }
 
             return language
@@ -83,6 +93,16 @@ final class KeyboardViewController: UIInputViewController {
 
         func persist() {
             UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        }
+
+        private static var defaultLanguage: OutputLanguage {
+            let identifier = Locale.preferredLanguages.first?.lowercased() ?? Locale.current.identifier.lowercased()
+
+            if identifier.hasPrefix("ja") || identifier.hasPrefix("zh") || identifier.hasPrefix("ko") {
+                return .english
+            }
+
+            return .japanese
         }
     }
 
@@ -95,9 +115,9 @@ final class KeyboardViewController: UIInputViewController {
         var displayName: String {
             switch self {
             case .polite:
-                return "Polite"
+                return KeyboardCopy.polite
             case .casual:
-                return "Casual"
+                return KeyboardCopy.casual
             }
         }
 
@@ -122,6 +142,140 @@ final class KeyboardViewController: UIInputViewController {
 
         func persist() {
             UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        }
+    }
+
+    private enum KeyboardCopy {
+        private enum InterfaceLanguage {
+            case english
+            case japanese
+            case chineseSimplified
+            case chineseTraditional
+            case korean
+
+            static var current: InterfaceLanguage {
+                let identifier = Locale.preferredLanguages.first?.lowercased() ?? Locale.current.identifier.lowercased()
+
+                if identifier.hasPrefix("ja") {
+                    return .japanese
+                }
+
+                if identifier.hasPrefix("ko") {
+                    return .korean
+                }
+
+                if identifier.hasPrefix("zh") {
+                    if identifier.contains("hant")
+                        || identifier.contains("-tw")
+                        || identifier.contains("_tw")
+                        || identifier.contains("-hk")
+                        || identifier.contains("_hk")
+                        || identifier.contains("-mo")
+                        || identifier.contains("_mo") {
+                        return .chineseTraditional
+                    }
+
+                    return .chineseSimplified
+                }
+
+                return .english
+            }
+        }
+
+        static var language: String {
+            localized(en: "Language", ja: "言語", zhHans: "语言", zhHant: "語言", ko: "언어")
+        }
+
+        static var tone: String {
+            localized(en: "Tone", ja: "トーン", zhHans: "语气", zhHant: "語氣", ko: "어조")
+        }
+
+        static var translateSelection: String {
+            localized(en: "Translate Selection", ja: "選択範囲を翻訳", zhHans: "翻译所选内容", zhHant: "翻譯選取內容", ko: "선택 항목 번역")
+        }
+
+        static var selectTextToTranslate: String {
+            localized(en: "Select text to translate", ja: "翻訳するテキストを選択", zhHans: "选择要翻译的文本", zhHant: "選取要翻譯的文字", ko: "번역할 텍스트 선택")
+        }
+
+        static var translating: String {
+            localized(en: "Translating", ja: "翻訳中", zhHans: "正在翻译", zhHant: "正在翻譯", ko: "번역 중")
+        }
+
+        static var privacyHint: String {
+            localized(
+                en: "Translation uses Apple's privacy-preserving on-device model, or in some cases Private Cloud Compute.",
+                ja: "翻訳にはAppleのプライバシー保護型オンデバイスモデル、またはPrivate Cloud Computeを使用します。",
+                zhHans: "翻译使用 Apple 保护隐私的设备端模型，某些情况下会使用 Private Cloud Compute。",
+                zhHant: "翻譯使用 Apple 保護隱私的裝置端模型，某些情況下會使用 Private Cloud Compute。",
+                ko: "번역에는 Apple의 개인정보 보호 온디바이스 모델 또는 Private Cloud Compute를 사용합니다."
+            )
+        }
+
+        static var japanese: String {
+            localized(en: "Japanese", ja: "日本語", zhHans: "日语", zhHant: "日文", ko: "일본어")
+        }
+
+        static var korean: String {
+            localized(en: "Korean", ja: "韓国語", zhHans: "韩语", zhHant: "韓文", ko: "한국어")
+        }
+
+        static var chinese: String {
+            localized(en: "Chinese", ja: "中国語", zhHans: "中文", zhHant: "中文", ko: "중국어")
+        }
+
+        static var english: String {
+            localized(en: "English", ja: "英語", zhHans: "英语", zhHant: "英文", ko: "영어")
+        }
+
+        static var spanish: String {
+            localized(en: "Spanish", ja: "スペイン語", zhHans: "西班牙语", zhHant: "西班牙文", ko: "스페인어")
+        }
+
+        static var french: String {
+            localized(en: "French", ja: "フランス語", zhHans: "法语", zhHant: "法文", ko: "프랑스어")
+        }
+
+        static var german: String {
+            localized(en: "German", ja: "ドイツ語", zhHans: "德语", zhHant: "德文", ko: "독일어")
+        }
+
+        static var polite: String {
+            localized(en: "Polite", ja: "丁寧", zhHans: "礼貌", zhHant: "禮貌", ko: "공손체")
+        }
+
+        static var casual: String {
+            localized(en: "Casual", ja: "カジュアル", zhHans: "随意", zhHant: "隨意", ko: "반말")
+        }
+
+        static func unavailable(_ language: String) -> String {
+            switch InterfaceLanguage.current {
+            case .english:
+                return "\(language) unavailable"
+            case .japanese:
+                return "\(language)は利用できません"
+            case .chineseSimplified:
+                return "\(language)不可用"
+            case .chineseTraditional:
+                return "\(language)無法使用"
+            case .korean:
+                return "\(language) 사용할 수 없음"
+            }
+        }
+
+        private static func localized(en: String, ja: String, zhHans: String, zhHant: String, ko: String) -> String {
+            switch InterfaceLanguage.current {
+            case .english:
+                return en
+            case .japanese:
+                return ja
+            case .chineseSimplified:
+                return zhHans
+            case .chineseTraditional:
+                return zhHant
+            case .korean:
+                return ko
+            }
         }
     }
 
@@ -315,7 +469,7 @@ final class KeyboardViewController: UIInputViewController {
         languageButton.menu = outputLanguageMenu()
         modeButton = languageButton
 
-        return makePickerColumn(labelText: "Language", button: languageButton)
+        return makePickerColumn(labelText: KeyboardCopy.language, button: languageButton)
     }
 
     private func makeJapaneseToneColumn() -> UIView {
@@ -325,7 +479,7 @@ final class KeyboardViewController: UIInputViewController {
         button.menu = japaneseToneMenu()
         toneButton = button
 
-        return makePickerColumn(labelText: "Tone", button: button)
+        return makePickerColumn(labelText: KeyboardCopy.tone, button: button)
     }
 
     private func makePickerColumn(labelText: String, button: UIButton) -> UIView {
@@ -361,7 +515,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func makePrivacyHintLabel() -> UIView {
         let label = UILabel()
-        label.text = "Translation uses Apple's privacy-preserving on-device model, or in some cases Private Cloud Compute."
+        label.text = KeyboardCopy.privacyHint
         label.font = Theme.hintFont
         label.textColor = Theme.accent
         label.textAlignment = .center
@@ -691,7 +845,7 @@ final class KeyboardViewController: UIInputViewController {
     private func configureSpaceSpinner(in space: UIButton) {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "Translating"
+        label.text = KeyboardCopy.translating
         label.font = Theme.spaceFont
         label.textColor = Theme.mutedText
 
@@ -824,7 +978,7 @@ final class KeyboardViewController: UIInputViewController {
                 let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
                 self.textDocumentProxy.insertText(translation)
             } catch {
-                self.spaceButton?.setTitle("\(self.outputLanguage.displayName) unavailable", for: .normal)
+                self.spaceButton?.setTitle(KeyboardCopy.unavailable(self.outputLanguage.displayName), for: .normal)
             }
 
             self.isTranslatingSelection = false
@@ -853,7 +1007,7 @@ final class KeyboardViewController: UIInputViewController {
                 let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
                 self.textDocumentProxy.insertText(translation)
             } catch {
-                self.spaceButton?.setTitle("\(targetLanguage.displayName) unavailable", for: .normal)
+                self.spaceButton?.setTitle(KeyboardCopy.unavailable(targetLanguage.displayName), for: .normal)
             }
 
             self.isTranslatingSelection = false
@@ -887,13 +1041,13 @@ final class KeyboardViewController: UIInputViewController {
                 self.spaceSpinner?.startAnimating()
             } else if self.selectedTextForTranslation != nil {
                 self.spaceTranslationStack?.isHidden = true
-                self.spaceButton?.setTitle("Translate Selection", for: .normal)
+                self.spaceButton?.setTitle(KeyboardCopy.translateSelection, for: .normal)
                 self.spaceButton?.isEnabled = true
                 self.spaceButton?.alpha = 1
                 self.spaceSpinner?.stopAnimating()
             } else {
                 self.spaceTranslationStack?.isHidden = true
-                self.spaceButton?.setTitle("Select text to translate", for: .normal)
+                self.spaceButton?.setTitle(KeyboardCopy.selectTextToTranslate, for: .normal)
                 self.spaceButton?.isEnabled = false
                 self.spaceButton?.alpha = 0.62
                 self.spaceSpinner?.stopAnimating()
@@ -918,10 +1072,10 @@ final class KeyboardViewController: UIInputViewController {
             let toneInstruction = targetLanguage == .japanese ? " Use \(japaneseTone.promptInstruction)." : ""
             let session = LanguageModelSession(
                 model: model,
-                instructions: "Translate user-selected text into natural \(targetLanguage.promptName).\(toneInstruction) Return only the translation, with no explanation, labels, or quotation marks."
+                instructions: "Detect the source language and translate user-selected text into natural \(targetLanguage.promptName).\(toneInstruction) Return only the translation, with no explanation, labels, or quotation marks."
             )
             let response = try await session.respond(to: """
-            Translate this text to \(targetLanguage.promptName).\(toneInstruction) Preserve names, numbers, URLs, and line breaks where reasonable. Return only the translation:
+            Detect the source language and translate this text to \(targetLanguage.promptName).\(toneInstruction) Preserve names, numbers, URLs, and line breaks where reasonable. Return only the translation:
 
             \(text)
             """)

@@ -10,4 +10,4 @@ Yubi is an iOS keyboard prototype for selected-text translation. Select text, sw
 4. Tap `Open Settings`, then enable `Yubi Keyboard`. If needed, go to Settings > General > Keyboard > Keyboards > Add New Keyboard.
 5. Switch to Yubi from the system globe key.
 
-The keyboard does not request Full Access. Japanese is the default output language, and the last selected output language is remembered.
+The keyboard does not request Full Access. English UI defaults to Japanese output; Japanese, Chinese, and Korean UI default to English output. The last selected output language is remembered.
