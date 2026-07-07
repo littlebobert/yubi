@@ -892,11 +892,11 @@ private enum AppCopy {
 
     static var openAIModelNote: String {
         localized(
-            en: "Uses GPT-5 with high reasoning.",
-            ja: "GPT-5を高推論設定で使用します。",
-            zhHans: "使用 GPT-5，并启用高推理设置。",
-            zhHant: "使用 GPT-5，並啟用高推理設定。",
-            ko: "GPT-5를 높은 추론 설정으로 사용합니다."
+            en: "Uses GPT-5.5 with high reasoning.",
+            ja: "GPT-5.5を高推論設定で使用します。",
+            zhHans: "使用 GPT-5.5，并启用高推理设置。",
+            zhHant: "使用 GPT-5.5，並啟用高推理設定。",
+            ko: "GPT-5.5를 높은 추론 설정으로 사용합니다."
         )
     }
 

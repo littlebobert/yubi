@@ -90,7 +90,7 @@ enum AIBackendSettings {
 }
 
 enum AIBackendClient {
-    private static let openAIModel = "gpt-5"
+    private static let openAIModel = "gpt-5.5"
     private static let claudeModel = "claude-fable-5-thinking-high"
     typealias StatusHandler = @Sendable (String) -> Void
 
