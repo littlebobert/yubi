@@ -44,6 +44,10 @@ enum AIBackend: String, CaseIterable, Identifiable {
             return "strongest, most expensive"
         }
     }
+
+    var isAvailable: Bool {
+        self != .apple
+    }
 }
 
 enum AIBackendSettings {
@@ -54,7 +58,8 @@ enum AIBackendSettings {
     static var selectedBackend: AIBackend {
         get {
             guard let rawValue = userDefaults.string(forKey: backendKey),
-                  let backend = AIBackend(rawValue: rawValue)
+                  let backend = AIBackend(rawValue: rawValue),
+                  backend.isAvailable
             else {
                 return .openAI
             }
@@ -62,7 +67,7 @@ enum AIBackendSettings {
             return backend
         }
         set {
-            userDefaults.set(newValue.rawValue, forKey: backendKey)
+            userDefaults.set((newValue.isAvailable ? newValue : .openAI).rawValue, forKey: backendKey)
         }
     }
 

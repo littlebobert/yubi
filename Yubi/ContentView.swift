@@ -14,6 +14,14 @@ private enum ContentTab: String {
     case history
 }
 
+private enum OnboardingStep: Int, CaseIterable {
+    case intro
+    case backend
+    case keyboard
+    case shortcut
+    case done
+}
+
 private enum SetupPane: String {
     case screenshots
     case textSelections
@@ -31,10 +39,12 @@ private enum APIKeyField: Hashable {
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("YubiHasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("YubiSelectedTab") private var selectedTabValue = ContentTab.intro.rawValue
     @AppStorage("YubiSelectedSetupPane") private var selectedSetupPaneValue = SetupPane.screenshots.rawValue
     @AppStorage("YubiSelectedHistoryAnalysisID") private var selectedHistoryAnalysisID = ""
     @AppStorage("YubiSelectedHistoryPane") private var selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
+    @AppStorage("YubiOnboardingStep") private var onboardingStepValue = OnboardingStep.intro.rawValue
     @State private var selectedTab: ContentTab = .intro
     @State private var selectedSetupPane: SetupPane = .screenshots
     @State private var selectedHistoryPane: HistoryPane = .screenshots
@@ -54,25 +64,17 @@ struct ContentView: View {
 
     private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    private var onboardingStep: OnboardingStep {
+        OnboardingStep(rawValue: onboardingStepValue) ?? .intro
+    }
+
     var body: some View {
-        TabView(selection: $selectedTab) {
-            introTab
-                .tabItem {
-                    Label(AppCopy.introTab, systemImage: "hand.point.up.left")
-                }
-                .tag(ContentTab.intro)
-
-            setupTab
-                .tabItem {
-                    Label(AppCopy.setupTab, systemImage: "gearshape")
-                }
-                .tag(ContentTab.setup)
-
-            historyTab
-                .tabItem {
-                    Label(AppCopy.historyTab, systemImage: "clock")
-                }
-                .tag(ContentTab.history)
+        Group {
+            if hasCompletedOnboarding {
+                mainTabs
+            } else {
+                onboarding
+            }
         }
         .onAppear {
             restoreNavigationState()
@@ -113,6 +115,159 @@ struct ContentView: View {
         .onOpenURL(perform: handleIncomingURL)
     }
 
+    private var mainTabs: some View {
+        TabView(selection: $selectedTab) {
+            introTab
+                .tabItem {
+                    Label(AppCopy.introTab, systemImage: "hand.point.up.left")
+                }
+                .tag(ContentTab.intro)
+
+            setupTab
+                .tabItem {
+                    Label(AppCopy.setupTab, systemImage: "gearshape")
+                }
+                .tag(ContentTab.setup)
+
+            historyTab
+                .tabItem {
+                    Label(AppCopy.historyTab, systemImage: "clock")
+                }
+                .tag(ContentTab.history)
+        }
+    }
+
+    private var onboarding: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        Text(AppCopy.onboardingStepLabel(current: onboardingStep.rawValue + 1, total: OnboardingStep.allCases.count))
+                            .font(.callout.bold())
+                            .foregroundStyle(.secondary)
+
+                        onboardingStepContent
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button(AppCopy.skipOnboarding) {
+                        completeOnboarding()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    if onboardingStep.rawValue > 0 {
+                        Button(AppCopy.backButton) {
+                            moveOnboardingBack()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Button(onboardingStep == .done ? AppCopy.doneButton : AppCopy.nextButton) {
+                        moveOnboardingForward()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(16)
+            }
+            .navigationTitle(AppCopy.onboardingTitle)
+        }
+    }
+
+    @ViewBuilder
+    private var onboardingStepContent: some View {
+        switch onboardingStep {
+        case .intro:
+            VStack(alignment: .leading, spacing: 16) {
+                onboardingHeader(
+                    title: AppCopy.onboardingWhatIsYubiTitle,
+                    body: AppCopy.onboardingWhatIsYubiBody
+                )
+                featureSummary
+                privacyBlurb
+            }
+        case .backend:
+            VStack(alignment: .leading, spacing: 16) {
+                onboardingHeader(
+                    title: AppCopy.onboardingBackendTitle,
+                    body: AppCopy.onboardingBackendBody
+                )
+                aiBackendSetup(showHeader: false)
+            }
+        case .keyboard:
+            VStack(alignment: .leading, spacing: 16) {
+                onboardingHeader(
+                    title: AppCopy.onboardingKeyboardTitle,
+                    body: AppCopy.onboardingKeyboardBody
+                )
+                setup
+            }
+        case .shortcut:
+            VStack(alignment: .leading, spacing: 16) {
+                onboardingHeader(
+                    title: AppCopy.onboardingShortcutTitle,
+                    body: AppCopy.onboardingShortcutBody(supportsSmartCreation: supportsShortcutSmartCreation)
+                )
+                actionButtonSetup
+            }
+        case .done:
+            VStack(alignment: .leading, spacing: 16) {
+                onboardingHeader(
+                    title: AppCopy.onboardingDoneTitle
+                )
+                featureSummary
+            }
+        }
+    }
+
+    private func onboardingHeader(title: String, body: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.largeTitle.bold())
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let body, !body.isEmpty {
+                Text(body)
+                    .foregroundStyle(.primary)
+            }
+        }
+    }
+
+    private func moveOnboardingForward() {
+        guard let nextStep = OnboardingStep(rawValue: onboardingStep.rawValue + 1) else {
+            completeOnboarding()
+            return
+        }
+
+        onboardingStepValue = nextStep.rawValue
+    }
+
+    private func moveOnboardingBack() {
+        guard let previousStep = OnboardingStep(rawValue: onboardingStep.rawValue - 1) else {
+            return
+        }
+
+        onboardingStepValue = previousStep.rawValue
+    }
+
+    private func completeOnboarding() {
+        hasCompletedOnboarding = true
+        onboardingStepValue = OnboardingStep.intro.rawValue
+        selectedTab = .intro
+        selectedTabValue = ContentTab.intro.rawValue
+    }
+
+    private func restartOnboarding() {
+        onboardingStepValue = OnboardingStep.intro.rawValue
+        hasCompletedOnboarding = false
+    }
+
     private var introTab: some View {
         NavigationStack {
             ScrollView {
@@ -132,7 +287,15 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    aiBackendSetup
+                    Button(action: restartOnboarding) {
+                        Label(AppCopy.runSetupGuideAgain, systemImage: "list.bullet.clipboard")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+
+                    aiBackendSetup()
 
                     Picker(AppCopy.setupTitle, selection: $selectedSetupPane) {
                         Text(AppCopy.screenshotsPane).tag(SetupPane.screenshots)
@@ -160,14 +323,20 @@ struct ContentView: View {
         }
     }
 
-    private var aiBackendSetup: some View {
+    private func aiBackendSetup(showHeader: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(AppCopy.aiBackendTitle, systemImage: "brain")
-                .font(.title2.bold())
+            if showHeader {
+                Label(AppCopy.aiBackendTitle, systemImage: "brain")
+                    .font(.title2.bold())
+            }
 
             VStack(spacing: 10) {
                 ForEach(AIBackend.allCases) { backend in
                     Button {
+                        guard backend.isAvailable else {
+                            return
+                        }
+
                         selectedAIBackend = backend
                     } label: {
                         HStack(alignment: .top, spacing: 12) {
@@ -191,6 +360,8 @@ struct ContentView: View {
                         .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
+                    .disabled(!backend.isAvailable)
+                    .opacity(backend.isAvailable ? 1 : 0.55)
                 }
             }
 
@@ -384,9 +555,8 @@ struct ContentView: View {
 
             StepView(number: 1, text: AppCopy.stepOpenSettings)
             StepView(number: 2, text: AppCopy.stepAddKeyboard)
-            StepView(number: 3, text: AppCopy.stepChooseKeyboard)
-            StepView(number: 4, text: AppCopy.stepSwitchKeyboard)
-            StepView(number: 5, text: AppCopy.stepTranslate)
+            StepView(number: 3, text: AppCopy.stepSwitchKeyboard)
+            StepView(number: 4, text: AppCopy.stepTranslate)
         }
     }
 
@@ -395,7 +565,7 @@ struct ContentView: View {
             Label(AppCopy.actionButtonTitle, systemImage: "button.programmable")
                 .font(.title2.bold())
 
-            Text(AppCopy.actionButtonBody)
+            Text(AppCopy.actionButtonBody(supportsSmartCreation: supportsShortcutSmartCreation))
                 .foregroundStyle(.secondary)
 
             Text(AppCopy.shortcutPrompt)
@@ -432,6 +602,10 @@ struct ContentView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var supportsShortcutSmartCreation: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
     }
 
     private func openSettings() {
@@ -569,7 +743,13 @@ struct ContentView: View {
         }
 
         autoNavigatedAnalysisIDs.insert(analysisID)
+        hasCompletedOnboarding = true
+        onboardingStepValue = OnboardingStep.intro.rawValue
+        selectedHistoryPane = .screenshots
+        selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
         selectedTab = .history
+        selectedTabValue = ContentTab.history.rawValue
+        selectedHistoryAnalysisID = analysisID.uuidString
 
         if historyPath.last != analysisID {
             historyPath = [analysisID]
@@ -770,6 +950,160 @@ private enum AppCopy {
         )
     }
 
+    static var onboardingTitle: String {
+        localized(
+            en: "Set Up Yubi",
+            ja: "Yubiを設定",
+            zhHans: "设置 Yubi",
+            zhHant: "設定 Yubi",
+            ko: "Yubi 설정"
+        )
+    }
+
+    static func onboardingStepLabel(current: Int, total: Int) -> String {
+        localized(
+            en: "Step \(current) of \(total)",
+            ja: "\(total)ステップ中\(current)",
+            zhHans: "第 \(current) 步，共 \(total) 步",
+            zhHant: "第 \(current) 步，共 \(total) 步",
+            ko: "\(total)단계 중 \(current)단계"
+        )
+    }
+
+    static var onboardingBackendTitle: String {
+        localized(
+            en: "Choose your AI backend",
+            ja: "AIバックエンドを選択",
+            zhHans: "选择你的 AI 后端",
+            zhHant: "選擇你的 AI 後端",
+            ko: "AI 백엔드 선택"
+        )
+    }
+
+    static var onboardingWhatIsYubiTitle: String {
+        localized(
+            en: "What is Yubi?",
+            ja: "Yubiとは？",
+            zhHans: "Yubi 是什么？",
+            zhHant: "Yubi 是什麼？",
+            ko: "Yubi란?"
+        )
+    }
+
+    static var onboardingWhatIsYubiBody: String {
+        localized(
+            en: "Yubi translates screenshots and selected text. Use Shortcuts for screenshots, or the Yubi keyboard for text you select in any app.",
+            ja: "Yubiはスクリーンショットと選択したテキストを翻訳します。スクリーンショットにはショートカットを、任意のアプリで選択したテキストにはYubiキーボードを使います。",
+            zhHans: "Yubi 可以翻译截图和选中的文本。截图使用快捷指令，任何 App 中选中的文本使用 Yubi 键盘。",
+            zhHant: "Yubi 可以翻譯截圖和選取的文字。截圖使用捷徑，任何 App 中選取的文字使用 Yubi 鍵盤。",
+            ko: "Yubi는 스크린샷과 선택한 텍스트를 번역합니다. 스크린샷은 단축어를, 어느 앱에서든 선택한 텍스트는 Yubi 키보드를 사용하세요."
+        )
+    }
+
+    static var onboardingBackendBody: String {
+        localized(
+            en: "OpenAI or Anthropic API keys give the best translations. Apple is private and free, but weaker.",
+            ja: "OpenAIまたはAnthropicのAPIキーを使うと翻訳品質が最も高くなります。Appleはプライベートで無料ですが、性能は控えめです。",
+            zhHans: "OpenAI 或 Anthropic API 密钥能提供最佳翻译。Apple 私密且免费，但能力较弱。",
+            zhHant: "OpenAI 或 Anthropic API 金鑰能提供最佳翻譯。Apple 私密且免費，但能力較弱。",
+            ko: "OpenAI 또는 Anthropic API 키가 가장 좋은 번역을 제공합니다. Apple은 비공개이고 무료지만 성능은 더 약합니다."
+        )
+    }
+
+    static var onboardingKeyboardTitle: String {
+        localized(
+            en: "Enable text selection translation",
+            ja: "テキスト選択翻訳を有効にする",
+            zhHans: "启用文本选择翻译",
+            zhHant: "啟用文字選取翻譯",
+            ko: "텍스트 선택 번역 활성화"
+        )
+    }
+
+    static var onboardingKeyboardBody: String {
+        localized(
+            en: "Add Yubi as a keyboard so you can select text in any app, switch to Yubi, and translate it in place.",
+            ja: "Yubiをキーボードとして追加すると、任意のアプリでテキストを選択し、Yubiに切り替えてその場で翻訳できます。",
+            zhHans: "将 Yubi 添加为键盘后，你可以在任何 App 中选择文本，切换到 Yubi，并就地翻译。",
+            zhHant: "將 Yubi 加入為鍵盤後，你可以在任何 App 中選取文字，切換到 Yubi，並就地翻譯。",
+            ko: "Yubi를 키보드로 추가하면 어느 앱에서든 텍스트를 선택하고 Yubi로 전환해 바로 번역할 수 있습니다."
+        )
+    }
+
+    static var onboardingShortcutTitle: String {
+        localized(
+            en: "Set up screenshot translation",
+            ja: "スクリーンショット翻訳を設定",
+            zhHans: "设置截图翻译",
+            zhHant: "設定截圖翻譯",
+            ko: "스크린샷 번역 설정"
+        )
+    }
+
+    static func onboardingShortcutBody(supportsSmartCreation: Bool) -> String {
+        actionButtonBody(supportsSmartCreation: supportsSmartCreation)
+    }
+
+    static var onboardingDoneTitle: String {
+        localized(
+            en: "You are ready",
+            ja: "準備完了",
+            zhHans: "准备就绪",
+            zhHant: "準備就緒",
+            ko: "준비 완료"
+        )
+    }
+
+    static var skipOnboarding: String {
+        localized(
+            en: "Skip for Now",
+            ja: "今はスキップ",
+            zhHans: "暂时跳过",
+            zhHant: "暫時跳過",
+            ko: "지금은 건너뛰기"
+        )
+    }
+
+    static var backButton: String {
+        localized(
+            en: "Back",
+            ja: "戻る",
+            zhHans: "返回",
+            zhHant: "返回",
+            ko: "뒤로"
+        )
+    }
+
+    static var nextButton: String {
+        localized(
+            en: "Next",
+            ja: "次へ",
+            zhHans: "下一步",
+            zhHant: "下一步",
+            ko: "다음"
+        )
+    }
+
+    static var doneButton: String {
+        localized(
+            en: "Done",
+            ja: "完了",
+            zhHans: "完成",
+            zhHant: "完成",
+            ko: "완료"
+        )
+    }
+
+    static var runSetupGuideAgain: String {
+        localized(
+            en: "Run Setup Guide Again",
+            ja: "設定ガイドを再実行",
+            zhHans: "重新运行设置指南",
+            zhHant: "重新執行設定指南",
+            ko: "설정 가이드 다시 실행"
+        )
+    }
+
     static var introTab: String {
         localized(
             en: "Intro",
@@ -833,7 +1167,13 @@ private enum AppCopy {
     static func aiBackendOptionTitle(_ backend: AIBackend) -> String {
         switch backend {
         case .apple:
-            return "Apple"
+            return localized(
+                en: "Apple (Coming Soon)",
+                ja: "Apple（近日対応予定）",
+                zhHans: "Apple（即将推出）",
+                zhHant: "Apple（即將推出）",
+                ko: "Apple(출시 예정)"
+            )
         case .openAI:
             return "OpenAI"
         case .claudeFable:
@@ -980,14 +1320,24 @@ private enum AppCopy {
         )
     }
 
-    static var actionButtonBody: String {
-        localized(
-            en: "Create a Shortcut that takes a screenshot, extracts text, and sends that text to Yubi. You can assign that Shortcut to the Action Button.",
-            ja: "スクリーンショットを撮り、テキストを抽出してYubiに送るショートカットを作成します。そのショートカットをアクションボタンに割り当てられます。",
-            zhHans: "创建一个快捷指令来截屏、提取文本，并将文本发送给 Yubi。你可以把该快捷指令分配给操作按钮。",
-            zhHant: "建立一個捷徑來截圖、擷取文字，並將文字傳送給 Yubi。你可以把該捷徑指定給動作按鈕。",
-            ko: "스크린샷을 찍고 텍스트를 추출한 뒤 Yubi로 보내는 단축어를 만드세요. 이 단축어를 동작 버튼에 지정할 수 있습니다."
-        )
+    static func actionButtonBody(supportsSmartCreation: Bool) -> String {
+        if supportsSmartCreation {
+            localized(
+                en: "On iOS 27 or later, use Shortcuts Smart Creation: paste the prompt below and let Shortcuts build the screenshot translation Shortcut for you.",
+                ja: "iOS 27以降では、ショートカットのSmart Creationを使います。下のプロンプトを貼り付けると、スクリーンショット翻訳のショートカットを自動で作成できます。",
+                zhHans: "在 iOS 27 或更高版本中，使用快捷指令的 Smart Creation：粘贴下方提示，让快捷指令为你创建截图翻译快捷指令。",
+                zhHant: "在 iOS 27 或以上版本中，使用捷徑的 Smart Creation：貼上下方提示，讓捷徑為你建立截圖翻譯捷徑。",
+                ko: "iOS 27 이상에서는 단축어 Smart Creation을 사용하세요. 아래 프롬프트를 붙여 넣으면 스크린샷 번역 단축어를 만들어 줍니다."
+            )
+        } else {
+            localized(
+                en: "Create the Shortcut manually: add Take Screenshot, then Analyze Image with Yubi, and assign that Shortcut to the Action Button.",
+                ja: "ショートカットを手動で作成します。「スクリーンショットを撮る」を追加し、次に「Yubiで画像を解析」を追加して、そのショートカットをアクションボタンに割り当てます。",
+                zhHans: "手动创建快捷指令：添加“截屏”，然后添加“用 Yubi 分析图像”，并将该快捷指令分配给操作按钮。",
+                zhHant: "手動建立捷徑：加入「截圖」，再加入「用 Yubi 分析影像」，並將該捷徑指定給動作按鈕。",
+                ko: "단축어를 직접 만드세요. ‘스크린샷 찍기’를 추가한 다음 ‘Yubi로 이미지 분석’을 추가하고, 그 단축어를 동작 버튼에 지정하세요."
+            )
+        }
     }
 
     static var shortcutPrompt: String {
@@ -1355,11 +1705,11 @@ private enum AppCopy {
 
     static var stepAddKeyboard: String {
         localized(
-            en: "If needed, go to General > Keyboard > Keyboards > Add New Keyboard.",
-            ja: "必要に応じて、「一般」>「キーボード」>「キーボード」>「新しいキーボードを追加」に進みます。",
-            zhHans: "如有需要，前往“通用”>“键盘”>“键盘”>“添加新键盘”。",
-            zhHant: "如有需要，前往「一般」>「鍵盤」>「鍵盤」>「加入新鍵盤」。",
-            ko: "필요하면 일반 > 키보드 > 키보드 > 새로운 키보드 추가로 이동하세요."
+            en: "Open Keyboards, enable Yubi Keyboard, and Allow Full Access.",
+            ja: "「キーボード」を開き、Yubiキーボードを有効にして、フルアクセスを許可します。",
+            zhHans: "打开“键盘”，启用 Yubi 键盘，并允许完全访问。",
+            zhHant: "打開「鍵盤」，啟用 Yubi 鍵盤，並允許完整取用。",
+            ko: "키보드를 열고 Yubi 키보드를 활성화한 다음 전체 접근을 허용하세요."
         )
     }
 
@@ -1454,7 +1804,7 @@ private struct StepView: View {
     let text: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Text("\(number)")
                 .font(.callout.bold())
                 .foregroundStyle(.white)
