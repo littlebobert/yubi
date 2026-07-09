@@ -27,7 +27,7 @@ public struct AnalyzeImageIntent: AppIntent {
         Summary("Analyze \(\.$image) with Yubi")
     }
 
-    public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
+    public func perform() async throws -> some IntentResult {
         screenshotIntentLogger.info("Analyze Image intent started; imageBytes=\(image.data.count, privacy: .public)")
         let analysisID = UUID()
         let imageFilename = ScreenshotAnalysisStore.saveImageData(image.data, for: analysisID)
@@ -48,7 +48,7 @@ public struct AnalyzeImageIntent: AppIntent {
             if backend != .apple {
                 ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
                 screenshotIntentLogger.info("Analyze Image intent saved pending image for selected backend")
-                return .result(value: message, dialog: IntentDialog(stringLiteral: message))
+                return .result()
             }
 
             let detectedText = try recognizedText(from: image.data)
@@ -63,7 +63,7 @@ public struct AnalyzeImageIntent: AppIntent {
             ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
 
             screenshotIntentLogger.info("Analyze Image intent saved pending result; detectedCharacters=\(detectedText.count, privacy: .public)")
-            return .result(value: message, dialog: IntentDialog(stringLiteral: message))
+            return .result()
         } catch {
             ScreenshotAnalysisStatusStore.markFailed("Analysis failed", analysisID: analysisID)
             screenshotIntentLogger.error("Analyze Image intent failed: \(String(describing: error), privacy: .public)")
@@ -117,12 +117,11 @@ public struct AnalyzeTextIntent: AppIntent {
         Summary("Analyze \(\.$text) with Yubi")
     }
 
-    public func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
+    public func perform() async throws -> some IntentResult {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
-            let message = "Yubi did not receive any text to analyze."
             screenshotIntentLogger.warning("Analyze Text intent ran without text")
-            return .result(value: message, dialog: IntentDialog(stringLiteral: message))
+            return .result()
         }
 
         screenshotIntentLogger.info("Analyze Text intent started; characters=\(trimmedText.count, privacy: .public)")
@@ -137,7 +136,7 @@ public struct AnalyzeTextIntent: AppIntent {
         let message = "\(AIBackendSettings.selectedBackend.displayName) is analyzing the text..."
         ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
         screenshotIntentLogger.info("Analyze Text intent saved pending result")
-        return .result(value: message, dialog: IntentDialog(stringLiteral: message))
+        return .result()
     }
 }
 

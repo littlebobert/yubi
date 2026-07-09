@@ -622,11 +622,17 @@ struct ContentView: View {
     }
 
     private func openShortcuts() {
-        guard let url = URL(string: "shortcuts://create-shortcut") else {
+        guard let shortcutsURL = URL(string: "shortcuts://create-shortcut"),
+              let appStoreURL = URL(string: "https://apps.apple.com/app/shortcuts/id1462947752")
+        else {
             return
         }
 
-        UIApplication.shared.open(url)
+        UIApplication.shared.open(shortcutsURL) { didOpen in
+            if !didOpen {
+                UIApplication.shared.open(appStoreURL)
+            }
+        }
     }
 
     private func handleIncomingURL(_ url: URL) {
