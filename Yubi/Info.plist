@@ -39,6 +39,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>YubiKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.justin.yubi.shared</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

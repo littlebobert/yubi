@@ -223,12 +223,26 @@ struct ScreenshotAnalysisStatus: Codable, Equatable {
 
 enum ScreenshotAnalysisStatusStore {
     private static let key = "YubiScreenshotAnalysisStatus"
+    private static let runningTimeout: TimeInterval = 10 * 60
 
     static func load() -> ScreenshotAnalysisStatus {
         guard let data = UserDefaults.standard.data(forKey: key),
               let status = try? JSONDecoder().decode(ScreenshotAnalysisStatus.self, from: data)
         else {
             return .idle
+        }
+
+        if status.phase == .running,
+           Date().timeIntervalSince(status.updatedAt) >= runningTimeout {
+            let failedStatus = ScreenshotAnalysisStatus(
+                phase: .failed,
+                analysisID: status.analysisID,
+                startedAt: nil,
+                updatedAt: Date(),
+                message: "The previous analysis did not finish. Try again."
+            )
+            save(failedStatus)
+            return failedStatus
         }
 
         return status

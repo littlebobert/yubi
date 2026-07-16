@@ -366,33 +366,61 @@ struct ContentView: View {
             }
 
             if selectedAIBackend == .openAI {
-                SecureField(AppCopy.openAIAPIKeyPlaceholder, text: $openAIAPIKey)
-                    .focused($focusedAPIKeyField, equals: .openAI)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.password)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        focusedAPIKeyField = nil
+                HStack(spacing: 10) {
+                    SecureField(AppCopy.openAIAPIKeyPlaceholder, text: $openAIAPIKey)
+                        .focused($focusedAPIKeyField, equals: .openAI)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.password)
+                        .submitLabel(.done)
+                        .onSubmit {
+                            focusedAPIKeyField = nil
+                        }
+
+                    if !openAIAPIKey.isEmpty {
+                        Button(role: .destructive) {
+                            openAIAPIKey = ""
+                            focusedAPIKeyField = nil
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                        .accessibilityLabel(AppCopy.removeAPIKey)
                     }
-                    .padding(12)
-                    .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .padding(12)
+                .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
 
                 Text(AppCopy.openAIModelNote)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else if selectedAIBackend == .claudeFable {
-                SecureField(AppCopy.claudeAPIKeyPlaceholder, text: $claudeAPIKey)
-                    .focused($focusedAPIKeyField, equals: .claude)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.password)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        focusedAPIKeyField = nil
+                HStack(spacing: 10) {
+                    SecureField(AppCopy.claudeAPIKeyPlaceholder, text: $claudeAPIKey)
+                        .focused($focusedAPIKeyField, equals: .claude)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.password)
+                        .submitLabel(.done)
+                        .onSubmit {
+                            focusedAPIKeyField = nil
+                        }
+
+                    if !claudeAPIKey.isEmpty {
+                        Button(role: .destructive) {
+                            claudeAPIKey = ""
+                            focusedAPIKeyField = nil
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                        .accessibilityLabel(AppCopy.removeAPIKey)
                     }
-                    .padding(12)
-                    .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .padding(12)
+                .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
             }
 
             Text(AppCopy.aiBackendStorageNote)
@@ -1236,23 +1264,33 @@ private enum AppCopy {
         )
     }
 
+    static var removeAPIKey: String {
+        localized(
+            en: "Remove API key",
+            ja: "APIキーを削除",
+            zhHans: "移除 API 密钥",
+            zhHant: "移除 API 金鑰",
+            ko: "API 키 삭제"
+        )
+    }
+
     static var openAIModelNote: String {
         localized(
-            en: "Uses GPT-5.5 with high reasoning.",
-            ja: "GPT-5.5を高推論設定で使用します。",
-            zhHans: "使用 GPT-5.5，并启用高推理设置。",
-            zhHant: "使用 GPT-5.5，並啟用高推理設定。",
-            ko: "GPT-5.5를 높은 추론 설정으로 사용합니다."
+            en: "Uses GPT-5.6 Sol with high reasoning.",
+            ja: "GPT-5.6 Solを高推論設定で使用します。",
+            zhHans: "使用 GPT-5.6 Sol，并启用高推理设置。",
+            zhHant: "使用 GPT-5.6 Sol，並啟用高推理設定。",
+            ko: "GPT-5.6 Sol을 높은 추론 설정으로 사용합니다."
         )
     }
 
     static var aiBackendStorageNote: String {
         localized(
-            en: "API keys are stored on this device so the app and keyboard can use your chosen backend.",
-            ja: "APIキーはこのデバイスに保存され、アプリとキーボードが選択したバックエンドを使用できるようにします。",
-            zhHans: "API 密钥会存储在此设备上，以便 App 和键盘使用你选择的后端。",
-            zhHant: "API 金鑰會儲存在此裝置上，以便 App 和鍵盤使用你選擇的後端。",
-            ko: "API 키는 이 기기에 저장되어 앱과 키보드가 선택한 백엔드를 사용할 수 있게 합니다."
+            en: "API keys are stored securely in this device's Keychain and shared only with the Yubi keyboard.",
+            ja: "APIキーはこのデバイスのキーチェーンに安全に保存され、Yubiキーボードとのみ共有されます。",
+            zhHans: "API 密钥安全地存储在此设备的钥匙串中，并且仅与 Yubi 键盘共享。",
+            zhHant: "API 金鑰安全地儲存在此裝置的鑰匙圈中，並且僅與 Yubi 鍵盤共享。",
+            ko: "API 키는 이 기기의 키체인에 안전하게 저장되며 Yubi 키보드와만 공유됩니다."
         )
     }
 
@@ -1576,6 +1614,26 @@ private enum AppCopy {
             zhHans: "\(backendName) 正在分析文本...",
             zhHant: "\(backendName) 正在分析文字...",
             ko: "\(backendName)이(가) 텍스트를 분석 중입니다..."
+        )
+    }
+
+    static var analysisStoppedTitle: String {
+        localized(
+            en: "Analysis stopped",
+            ja: "解析が停止しました",
+            zhHans: "分析已停止",
+            zhHant: "分析已停止",
+            ko: "분석이 중단됨"
+        )
+    }
+
+    static var analysisStoppedBody: String {
+        localized(
+            en: "This analysis did not finish. Check your API key and try again.",
+            ja: "この解析は完了しませんでした。APIキーを確認して、もう一度お試しください。",
+            zhHans: "此分析未完成。请检查 API 密钥后重试。",
+            zhHant: "此分析未完成。請檢查 API 金鑰後再試一次。",
+            ko: "이 분석이 완료되지 않았습니다. API 키를 확인한 후 다시 시도하세요."
         )
     }
 
@@ -1964,7 +2022,11 @@ private struct AnalysisDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let analysis {
                     if !analysis.isComplete {
-                        analysisProgressView
+                        if analysisStatus.phase == .running && analysisStatus.analysisID == analysis.id {
+                            analysisProgressView
+                        } else {
+                            analysisFailureView
+                        }
                     }
 
                     screenshotSection
@@ -2016,6 +2078,35 @@ private struct AnalysisDetailView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var analysisFailureView: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AppCopy.analysisStoppedTitle)
+                    .font(.headline)
+
+                Text(analysisFailureMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var analysisFailureMessage: String {
+        guard analysisStatus.phase == .failed,
+              analysisStatus.analysisID == analysisID
+        else {
+            return AppCopy.analysisStoppedBody
+        }
+
+        return analysisStatus.message ?? AppCopy.analysisStoppedBody
     }
 
     @ViewBuilder

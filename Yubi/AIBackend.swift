@@ -4,6 +4,7 @@ import Foundation
 import FoundationModels
 #endif
 import os
+import Security
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -52,8 +53,8 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
 enum AIBackendSettings {
     private static let backendKey = "YubiAIBackend"
-    private static let openAIAPIKeyKey = "YubiOpenAIAPIKey"
-    private static let claudeAPIKeyKey = "YubiClaudeAPIKey"
+    private static let legacyOpenAIAPIKeyKey = "YubiOpenAIAPIKey"
+    private static let legacyClaudeAPIKeyKey = "YubiClaudeAPIKey"
 
     static var selectedBackend: AIBackend {
         get {
@@ -73,29 +74,124 @@ enum AIBackendSettings {
 
     static var openAIAPIKey: String {
         get {
-            userDefaults.string(forKey: openAIAPIKeyKey) ?? ""
+            removeLegacyAPIKey(forKey: legacyOpenAIAPIKeyKey)
+            return AIBackendCredentialStore.read(account: "openai")
         }
         set {
-            userDefaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: openAIAPIKeyKey)
+            removeLegacyAPIKey(forKey: legacyOpenAIAPIKeyKey)
+            AIBackendCredentialStore.write(newValue, account: "openai")
         }
     }
 
     static var claudeAPIKey: String {
         get {
-            userDefaults.string(forKey: claudeAPIKeyKey) ?? ""
+            removeLegacyAPIKey(forKey: legacyClaudeAPIKeyKey)
+            return AIBackendCredentialStore.read(account: "claude")
         }
         set {
-            userDefaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: claudeAPIKeyKey)
+            removeLegacyAPIKey(forKey: legacyClaudeAPIKeyKey)
+            AIBackendCredentialStore.write(newValue, account: "claude")
         }
     }
 
     private static var userDefaults: UserDefaults {
         UserDefaults(suiteName: aiBackendAppGroupIdentifier) ?? .standard
     }
+
+    private static func removeLegacyAPIKey(forKey key: String) {
+        userDefaults.removeObject(forKey: key)
+    }
+}
+
+private enum AIBackendCredentialStore {
+    private static let service = "com.justin.yubi.ai-backend"
+    private static let accessGroupInfoKey = "YubiKeychainAccessGroup"
+
+    static func read(account: String) -> String {
+        guard var query = baseQuery(account: account) else {
+            return ""
+        }
+
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecItemNotFound {
+            return ""
+        }
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8)
+        else {
+            aiBackendLogger.error("Could not read \(account, privacy: .public) API key from Keychain; status=\(status, privacy: .public)")
+            return ""
+        }
+
+        return value
+    }
+
+    static func write(_ value: String, account: String) {
+        guard let query = baseQuery(account: account) else {
+            return
+        }
+
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else {
+            let status = SecItemDelete(query as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                aiBackendLogger.error("Could not remove \(account, privacy: .public) API key from Keychain; status=\(status, privacy: .public)")
+            }
+            return
+        }
+
+        let data = Data(trimmedValue.utf8)
+        let updateStatus = SecItemUpdate(
+            query as CFDictionary,
+            [kSecValueData: data] as CFDictionary
+        )
+
+        if updateStatus == errSecSuccess {
+            return
+        }
+
+        guard updateStatus == errSecItemNotFound else {
+            aiBackendLogger.error("Could not update \(account, privacy: .public) API key in Keychain; status=\(updateStatus, privacy: .public)")
+            return
+        }
+
+        var attributes = query
+        attributes[kSecValueData] = data
+        attributes[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
+        let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+        if addStatus != errSecSuccess {
+            aiBackendLogger.error("Could not save \(account, privacy: .public) API key in Keychain; status=\(addStatus, privacy: .public)")
+        }
+    }
+
+    private static func baseQuery(account: String) -> [CFString: Any]? {
+        guard let accessGroup = Bundle.main.object(forInfoDictionaryKey: accessGroupInfoKey) as? String,
+              !accessGroup.isEmpty,
+              !accessGroup.contains("$(")
+        else {
+            aiBackendLogger.error("Shared Keychain access group is missing from Info.plist")
+            return nil
+        }
+
+        return [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrAccessGroup: accessGroup
+        ]
+    }
 }
 
 enum AIBackendClient {
-    private static let openAIModel = "gpt-5.5"
+    private static let openAIModel = "gpt-5.6-sol"
     private static let claudeModel = "claude-fable-5-thinking-high"
     typealias StatusHandler = @Sendable (String) -> Void
 

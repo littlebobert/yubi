@@ -28,6 +28,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>YubiKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.justin.yubi.shared</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

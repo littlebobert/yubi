@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.justin.yubi</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.justin.yubi.shared</string>
+	</array>
 </dict>
 </plist>

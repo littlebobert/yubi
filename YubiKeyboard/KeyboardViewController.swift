@@ -364,6 +364,7 @@ final class KeyboardViewController: UIInputViewController {
     private var heightConstraint: NSLayoutConstraint?
     private var currentWordTouches: [TouchObservation] = []
     private var isTranslatingSelection = false
+    private var translationTask: Task<Void, Never>?
     private var shouldReturnToLettersAfterSpace = false
     private var pendingAutocorrection: AppliedAutocorrection?
     private var suggestionBarState: SuggestionBarState?
@@ -379,9 +380,18 @@ final class KeyboardViewController: UIInputViewController {
         keyFeedback.prepare()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        isTranslatingSelection = false
+        refreshTranslationControls()
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopDeleteRepeat()
+        translationTask?.cancel()
+        translationTask = nil
+        isTranslatingSelection = false
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
@@ -1033,11 +1043,12 @@ final class KeyboardViewController: UIInputViewController {
         performKeyFeedback()
         refreshSpaceKey()
 
-        Task { [weak self] in
+        translationTask = Task { [weak self] in
             guard let self else { return }
 
             do {
                 let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
+                try Task.checkCancellation()
                 self.textDocumentProxy.insertText(translation)
                 self.saveTextEditHistory(
                     sourceText: selectedText,
@@ -1045,11 +1056,14 @@ final class KeyboardViewController: UIInputViewController {
                     targetLanguage: self.outputLanguage,
                     japaneseTone: self.japaneseTone
                 )
+            } catch is CancellationError {
+                return
             } catch {
                 keyboardTranslationLogger.error("Long-press translation failed: \(String(describing: error), privacy: .public)")
                 self.spaceButton?.setTitle(self.translationErrorTitle(error, targetLanguage: self.outputLanguage), for: .normal)
             }
 
+            self.translationTask = nil
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
         }
@@ -1071,11 +1085,12 @@ final class KeyboardViewController: UIInputViewController {
         performKeyFeedback()
         refreshTranslationControls()
 
-        Task { [weak self] in
+        translationTask = Task { [weak self] in
             guard let self else { return }
 
             do {
                 let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
+                try Task.checkCancellation()
                 self.textDocumentProxy.insertText(translation)
                 self.saveTextEditHistory(
                     sourceText: selectedText,
@@ -1083,11 +1098,14 @@ final class KeyboardViewController: UIInputViewController {
                     targetLanguage: targetLanguage,
                     japaneseTone: targetTone
                 )
+            } catch is CancellationError {
+                return
             } catch {
                 keyboardTranslationLogger.error("Selection translation failed: \(String(describing: error), privacy: .public)")
                 self.spaceButton?.setTitle(self.translationErrorTitle(error, targetLanguage: targetLanguage), for: .normal)
             }
 
+            self.translationTask = nil
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
         }
@@ -1127,6 +1145,7 @@ final class KeyboardViewController: UIInputViewController {
             guard let self else { return }
 
             let selectedText = self.selectedTextForTranslation
+            let availabilityError = self.backendAvailabilityError
 
             self.privacyHintLabel?.text = KeyboardCopy.privacyHint(for: AIBackendSettings.selectedBackend)
 
@@ -1139,6 +1158,15 @@ final class KeyboardViewController: UIInputViewController {
                 self.spaceButton?.alpha = 1
                 self.spaceTranslationStack?.isHidden = false
                 self.spaceSpinner?.startAnimating()
+            } else if let availabilityError {
+                self.spaceTranslationStack?.isHidden = true
+                self.spaceButton?.setTitle(
+                    self.translationErrorTitle(availabilityError, targetLanguage: self.outputLanguage),
+                    for: .normal
+                )
+                self.spaceButton?.isEnabled = false
+                self.spaceButton?.alpha = 1
+                self.spaceSpinner?.stopAnimating()
             } else if selectedText != nil {
                 self.spaceTranslationStack?.isHidden = true
                 self.spaceButton?.setTitle(KeyboardCopy.translateSelection, for: .normal)
@@ -1158,6 +1186,15 @@ final class KeyboardViewController: UIInputViewController {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: update)
         } else {
             update()
+        }
+    }
+
+    private var backendAvailabilityError: Error? {
+        do {
+            try validateBackendAvailability()
+            return nil
+        } catch {
+            return error
         }
     }
 
