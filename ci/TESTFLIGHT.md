@@ -56,7 +56,11 @@ base64 -i ~/Downloads/Yubi_Keyboard.mobileprovision | pbcopy
    Optional: `marketing_version`, `xcode_version` (must stay non-beta).
 3. Or push a tag: `v1.0.1`.
 
-Build number = `github.run_number` (app + keyboard stay in sync).
+Build number is chosen automatically as:
+
+`max(latest App Store Connect build + 1, github.run_number, project CURRENT_PROJECT_VERSION, 8)`
+
+and applied to **both** the app and keyboard so they stay in sync. You do not need to bump the project build number by hand before each upload.
 
 ## After upload
 

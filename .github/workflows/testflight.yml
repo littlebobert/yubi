@@ -66,31 +66,6 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           xcodebuild -showsdks
 
-      - name: Resolve version / build number
-        id: version
-        run: |
-          set -euo pipefail
-
-          default_marketing="$(
-            xcodebuild -project "$PROJECT" -scheme "$SCHEME" -showBuildSettings 2>/dev/null \
-              | awk -F' = ' '/MARKETING_VERSION/ { print $2; exit }' \
-              | tr -d '[:space:]'
-          )"
-          marketing="${{ github.event.inputs.marketing_version || '' }}"
-          if [ -z "${marketing}" ]; then
-            marketing="${default_marketing:-1.0}"
-          fi
-
-          build_number="${GITHUB_RUN_NUMBER}"
-
-          {
-            echo "marketing=${marketing}"
-            echo "build_number=${build_number}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Marketing version: ${marketing}"
-          echo "Build number: ${build_number}"
-
       - name: Install App Store Connect API key
         env:
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
@@ -115,6 +90,46 @@ jobs:
           cp "$KEY_PATH" "${GITHUB_WORKSPACE}/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
 
           echo "AUTH_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Resolve version / build number
+        id: version
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          default_marketing="$(
+            xcodebuild -project "$PROJECT" -scheme "$SCHEME" -showBuildSettings 2>/dev/null \
+              | awk -F' = ' '/MARKETING_VERSION / { print $2; exit }' \
+              | tr -d '[:space:]'
+          )"
+          marketing="${{ github.event.inputs.marketing_version || '' }}"
+          if [ -z "${marketing}" ]; then
+            marketing="${default_marketing:-1.0}"
+          fi
+
+          project_build_floor="$(
+            xcodebuild -project "$PROJECT" -scheme "$SCHEME" -showBuildSettings 2>/dev/null \
+              | awk -F' = ' '/CURRENT_PROJECT_VERSION / { print $2; exit }' \
+              | tr -d '[:space:]'
+          )"
+
+          # Auto-increment above the highest build already on App Store Connect,
+          # and never go below GitHub run number or the project floor.
+          MARKETING_VERSION="$marketing" \
+          PROJECT_BUILD_FLOOR="${project_build_floor:-0}" \
+          MIN_BUILD_NUMBER=8 \
+            python3 ci/next_build_number.py
+
+          # Script wrote build_number (and marketing) to GITHUB_OUTPUT.
+          if ! grep -q '^marketing=' "$GITHUB_OUTPUT"; then
+            echo "marketing=${marketing}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Marketing version: $(grep '^marketing=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2-)"
+          echo "Build number: $(grep '^build_number=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2-)"
 
       - name: Import Apple Distribution certificate
         uses: apple-actions/import-codesign-certs@v3
