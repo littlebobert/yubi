@@ -7,12 +7,19 @@
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
 	<key>teamID</key>
 	<string>XDWKSAH7W3</string>
 	<key>uploadSymbols</key>
 	<true/>
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.justin.yubi</key>
+		<string>Yubi</string>
+		<key>com.justin.yubi.keyboard</key>
+		<string>Yubi Keyboard</string>
+	</dict>
 </dict>
 </plist>
