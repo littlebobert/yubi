@@ -1,0 +1,242 @@
+# Build Yubi on a stable GitHub-hosted Xcode (not a beta) and upload to App Store Connect.
+# Local macOS/Xcode betas are fine for day-to-day work; TestFlight/App Store submission
+# requires a release SDK, which this workflow provides.
+
+name: TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: "CFBundleShortVersionString (e.g. 1.0.1). Leave empty to keep the project value."
+        required: false
+        type: string
+        default: ""
+      xcode_version:
+        description: "Stable Xcode version on the runner (e.g. latest-stable, 16.4). Must not be a beta."
+        required: false
+        type: string
+        default: "latest-stable"
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PROJECT: Yubi.xcodeproj
+  SCHEME: Yubi
+  TEAM_ID: XDWKSAH7W3
+  BUNDLE_ID: com.justin.yubi
+  KEYBOARD_BUNDLE_ID: com.justin.yubi.keyboard
+  DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+  ARCHIVE_PATH: ${{ github.workspace }}/build/Yubi.xcarchive
+  EXPORT_PATH: ${{ github.workspace }}/build/export
+  EXPORT_OPTIONS: ${{ github.workspace }}/ci/ExportOptions.plist
+
+jobs:
+  testflight:
+    name: Archive and upload
+    runs-on: macos-15
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ github.event.inputs.xcode_version || 'latest-stable' }}
+
+      - name: Show Xcode / SDK
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcodebuild -showsdks
+
+      - name: Resolve version / build number
+        id: version
+        run: |
+          set -euo pipefail
+
+          default_marketing="$(
+            xcodebuild -project "$PROJECT" -scheme "$SCHEME" -showBuildSettings 2>/dev/null \
+              | awk -F' = ' '/MARKETING_VERSION/ { print $2; exit }' \
+              | tr -d '[:space:]'
+          )"
+          marketing="${{ github.event.inputs.marketing_version || '' }}"
+          if [ -z "${marketing}" ]; then
+            marketing="${default_marketing:-1.0}"
+          fi
+
+          # Monotonic build number for App Store Connect (shared by app + keyboard).
+          build_number="${GITHUB_RUN_NUMBER}"
+
+          {
+            echo "marketing=${marketing}"
+            echo "build_number=${build_number}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Marketing version: ${marketing}"
+          echo "Build number: ${build_number}"
+
+      - name: Install App Store Connect API key
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_STORE_CONNECT_API_KEY:-}" ] || [ -z "${APP_STORE_CONNECT_KEY_ID:-}" ]; then
+            echo "::error::Missing APP_STORE_CONNECT_API_KEY or APP_STORE_CONNECT_KEY_ID secret."
+            exit 1
+          fi
+
+          KEY_PATH="${RUNNER_TEMP}/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          # Preserve PEM newlines exactly as stored in the secret.
+          printf '%s\n' "$APP_STORE_CONNECT_API_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+
+          # altool / Transporter search these locations when --apiKey is passed.
+          mkdir -p \
+            "${HOME}/.appstoreconnect/private_keys" \
+            "${HOME}/private_keys" \
+            "${GITHUB_WORKSPACE}/private_keys"
+          cp "$KEY_PATH" "${HOME}/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          cp "$KEY_PATH" "${HOME}/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          cp "$KEY_PATH" "${GITHUB_WORKSPACE}/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+
+          echo "AUTH_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Import Apple Distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.BUILD_CERTIFICATE_PASSWORD }}
+
+      - name: Archive
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+
+          # Automatic signing + ASC API key lets xcodebuild create/refresh App Store
+          # profiles for both the app and keyboard extension on the runner.
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -archivePath "$ARCHIVE_PATH" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            -allowProvisioningUpdates \
+            MARKETING_VERSION="$MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            archive \
+            2>&1 | tee build/archive.log
+
+          test -d "$ARCHIVE_PATH"
+
+      - name: Export IPA
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$EXPORT_PATH"
+          set -o pipefail
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$EXPORT_OPTIONS" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            -allowProvisioningUpdates \
+            2>&1 | tee build/export.log
+
+          IPA="$(find "$EXPORT_PATH" -name '*.ipa' | head -n 1)"
+          if [ -z "${IPA}" ]; then
+            echo "::error::No IPA produced. See build/export.log"
+            exit 1
+          fi
+          echo "IPA_PATH=${IPA}" >> "$GITHUB_ENV"
+          echo "Exported IPA: ${IPA}"
+          ls -lh "$IPA"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yubi-${{ steps.version.outputs.marketing }}-${{ steps.version.outputs.build_number }}
+          path: |
+            ${{ env.EXPORT_PATH }}/*.ipa
+            build/archive.log
+            build/export.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload to App Store Connect
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          UPLOAD_LOG=build/upload.log
+
+          set +e
+          set -o pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            2>&1 | tee "$UPLOAD_LOG"
+          status=$?
+          set -e
+
+          if grep -qE 'UPLOAD FAILED|Failed to upload|ERROR ITMS-|Validation failed' "$UPLOAD_LOG"; then
+            echo "::error::App Store Connect rejected the upload. Relevant lines:"
+            grep -E 'UPLOAD FAILED|Failed to upload|ERROR ITMS-|Validation failed|error:' "$UPLOAD_LOG" | head -n 40 || true
+            exit 1
+          fi
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::altool exited with status ${status}"
+            exit "$status"
+          fi
+
+          echo "Upload accepted by App Store Connect. Processing / TestFlight availability can take several minutes."
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## TestFlight upload"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Marketing version | \`${{ steps.version.outputs.marketing }}\` |"
+            echo "| Build number | \`${{ steps.version.outputs.build_number }}\` |"
+            echo "| Xcode | \`$(xcodebuild -version | tr '\n' ' ')\` |"
+            echo "| IPA | \`${IPA_PATH:-not created}\` |"
+            echo ""
+            echo "After processing finishes in App Store Connect, add the build to a TestFlight group."
+          } >> "$GITHUB_STEP_SUMMARY"

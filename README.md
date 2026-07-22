@@ -14,3 +14,7 @@ Yubi supports Apple Foundation Models, OpenAI, and Claude Fable 5 as AI backends
 6. For selected-text translation, enable `Yubi Keyboard` from Settings > General > Keyboard > Keyboards > Add New Keyboard.
 
 Full Access lets the keyboard extension use your selected AI backend and save Text Edits history in Yubi.
+
+## TestFlight
+
+Submit builds from GitHub Actions on a **stable** Xcode (App Store Connect rejects local Xcode betas). See [ci/TESTFLIGHT.md](ci/TESTFLIGHT.md) and the **TestFlight** workflow under Actions.
