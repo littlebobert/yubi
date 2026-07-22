@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Compute the next CFBundleVersion higher than App Store Connect and local floors."""
+"""Compute the next CFBundleVersion higher than App Store Connect and local floors.
+
+Uses only the Python stdlib + openssl (already on GitHub macOS runners).
+No pip / PyJWT install required.
+"""
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -20,33 +27,82 @@ def _require(name: str) -> str:
     return value
 
 
-def _jwt(key_id: str, issuer_id: str, private_key: str) -> str:
-    try:
-        import jwt  # type: ignore
-    except ImportError:
-        import subprocess
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet", "PyJWT", "cryptography"],
-            stdout=subprocess.DEVNULL,
-        )
-        import jwt  # type: ignore
 
+def _jwt(key_id: str, issuer_id: str, private_key_pem: str) -> str:
+    """Create an App Store Connect API JWT (ES256) via openssl."""
     now = int(time.time())
-    token = jwt.encode(
-        {
-            "iss": issuer_id,
-            "iat": now,
-            "exp": now + 15 * 60,
-            "aud": "appstoreconnect-v1",
-        },
-        private_key,
-        algorithm="ES256",
-        headers={"kid": key_id, "typ": "JWT"},
-    )
-    if isinstance(token, bytes):
-        return token.decode()
-    return token
+    header = {"alg": "ES256", "kid": key_id, "typ": "JWT"}
+    payload = {
+        "iss": issuer_id,
+        "iat": now,
+        "exp": now + 15 * 60,
+        "aud": "appstoreconnect-v1",
+    }
+
+    signing_input = (
+        f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}."
+        f"{_b64url(json.dumps(payload, separators=(',', ':')).encode())}"
+    ).encode("ascii")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        key_path = Path(tmp) / "AuthKey.p8"
+        sig_path = Path(tmp) / "sig.der"
+        key_path.write_text(private_key_pem if private_key_pem.endswith("\n") else private_key_pem + "\n")
+
+        # ECDSA-SHA256 DER signature over the JWT signing input.
+        result = subprocess.run(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-sign",
+                str(key_path),
+                "-out",
+                str(sig_path),
+            ],
+            input=signing_input,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")
+            raise SystemExit(f"openssl failed to sign App Store Connect JWT: {err}")
+
+        der_sig = sig_path.read_bytes()
+
+    jose_sig = _der_ecdsa_to_jose(der_sig)
+    return f"{signing_input.decode('ascii')}.{_b64url(jose_sig)}"
+
+
+def _der_ecdsa_to_jose(der_sig: bytes) -> bytes:
+    """Convert OpenSSL DER ECDSA signature to raw R||S (JOSE ES256, 64 bytes)."""
+    # DER: SEQUENCE { INTEGER r, INTEGER s }
+    if len(der_sig) < 8 or der_sig[0] != 0x30:
+        raise SystemExit("Unexpected ECDSA DER signature format")
+
+    idx = 2 if der_sig[1] < 0x80 else 3
+
+    if der_sig[idx] != 0x02:
+        raise SystemExit("Unexpected ECDSA DER signature (missing r)")
+    r_len = der_sig[idx + 1]
+    r = der_sig[idx + 2 : idx + 2 + r_len]
+    idx = idx + 2 + r_len
+
+    if der_sig[idx] != 0x02:
+        raise SystemExit("Unexpected ECDSA DER signature (missing s)")
+    s_len = der_sig[idx + 1]
+    s = der_sig[idx + 2 : idx + 2 + s_len]
+
+    def fixed(value: bytes) -> bytes:
+        value = value.lstrip(b"\x00") or b"\x00"
+        if len(value) > 32:
+            raise SystemExit("ECDSA coordinate longer than 32 bytes")
+        return value.rjust(32, b"\x00")
+
+    return fixed(r) + fixed(s)
 
 
 def _api_get(url: str, token: str) -> dict:
@@ -71,7 +127,6 @@ def _parse_build_number(raw: str | None) -> int | None:
     text = str(raw).strip()
     if not text:
         return None
-    # Prefer leading integer ("8", "8.1" -> 8). ASC prefers pure integers for iOS builds.
     digits = ""
     for ch in text:
         if ch.isdigit():
@@ -91,13 +146,15 @@ def _latest_uploaded_build(token: str, bundle_id: str) -> int:
     )
     data = apps.get("data") or []
     if not data:
-        print(f"No App Store Connect app found for bundle id {bundle_id}; starting from floors only.", file=sys.stderr)
+        print(
+            f"No App Store Connect app found for bundle id {bundle_id}; starting from floors only.",
+            file=sys.stderr,
+        )
         return 0
 
     app_id = data[0]["id"]
     highest = 0
 
-    # Pre-release / TestFlight + App Store builds share cfBundleVersion uniqueness per app.
     builds_url = (
         "https://api.appstoreconnect.apple.com/v1/builds?"
         + urllib.parse.urlencode(
@@ -115,7 +172,6 @@ def _latest_uploaded_build(token: str, bundle_id: str) -> int:
         if number is not None:
             highest = max(highest, number)
 
-    # Also check App Store versions' build membership if present.
     versions_url = (
         f"https://api.appstoreconnect.apple.com/v1/apps/{app_id}/appStoreVersions?"
         + urllib.parse.urlencode({"limit": "10", "fields[appStoreVersions]": "versionString"})
@@ -166,7 +222,6 @@ def main() -> int:
     build_number = max(floors)
     marketing = os.environ.get("MARKETING_VERSION", "").strip()
 
-    # Optional GitHub Actions outputs.
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
         with Path(output_path).open("a", encoding="utf-8") as handle:
