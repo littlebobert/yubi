@@ -1,4 +1,11 @@
 import Foundation
+import os
+import UserNotifications
+
+private let screenshotNotificationLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "Yubi",
+    category: "ScreenshotNotifications"
+)
 
 struct ScreenshotAnalysis: Codable, Equatable, Identifiable {
     let id: UUID
@@ -284,5 +291,78 @@ enum ScreenshotAnalysisStatusStore {
         }
 
         UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+enum ScreenshotAnalysisNotificationService {
+    private static let center = UNUserNotificationCenter.current()
+
+    static func requestAuthorizationIfNeeded() async {
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .notDetermined else {
+            return
+        }
+
+        do {
+            _ = try await center.requestAuthorization(options: [.alert, .sound])
+        } catch {
+            screenshotNotificationLogger.error("Could not request notification authorization: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    static func notifyCompleted(analysisID: UUID) async {
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+                || settings.authorizationStatus == .ephemeral
+        else {
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Yubi"
+        content.body = completionMessage
+        content.sound = .default
+        content.userInfo = ["analysisID": analysisID.uuidString]
+
+        let request = UNNotificationRequest(
+            identifier: "screenshot-analysis-\(analysisID.uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        do {
+            try await center.add(request)
+        } catch {
+            screenshotNotificationLogger.error("Could not schedule screenshot completion notification: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private static var completionMessage: String {
+        let identifier = Locale.preferredLanguages.first?.lowercased() ?? Locale.current.identifier.lowercased()
+
+        if identifier.hasPrefix("ja") {
+            return "スクリーンショットの翻訳が完了しました。"
+        }
+
+        if identifier.hasPrefix("ko") {
+            return "스크린샷 번역이 완료되었습니다."
+        }
+
+        if identifier.hasPrefix("zh-hant")
+            || identifier.contains("-tw")
+            || identifier.contains("_tw")
+            || identifier.contains("-hk")
+            || identifier.contains("_hk")
+            || identifier.contains("-mo")
+            || identifier.contains("_mo") {
+            return "螢幕截圖翻譯已完成。"
+        }
+
+        if identifier.hasPrefix("zh") {
+            return "截图翻译已完成。"
+        }
+
+        return "Your screenshot translation is ready."
     }
 }

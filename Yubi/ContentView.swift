@@ -8,6 +8,28 @@ private let shortcutURLLogger = Logger(
     category: "ShortcutURL"
 )
 
+@MainActor
+private final class AnalysisBackgroundTask {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+
+    init(name: String) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            Task { @MainActor in
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else {
+            return
+        }
+
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
+}
+
 private enum ContentTab: String {
     case intro
     case setup
@@ -60,6 +82,7 @@ struct ContentView: View {
     @State private var isAnalyzingShortcutText = false
     @State private var resumingAnalysisIDs: Set<UUID> = []
     @State private var autoNavigatedAnalysisIDs: Set<UUID> = []
+    @State private var shouldRevealAnalysisWhenFinished = false
     @FocusState private var focusedAPIKeyField: APIKeyField?
 
     private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -68,16 +91,39 @@ struct ContentView: View {
         OnboardingStep(rawValue: onboardingStepValue) ?? .intro
     }
 
+    private var isShowingAnalysisSplash: Bool {
+        guard hasCompletedOnboarding else {
+            return false
+        }
+
+        if analysisStatus.phase == .running {
+            return true
+        }
+
+        // Warm Action Button launches can mark running before @State catches up.
+        return ScreenshotAnalysisStatusStore.load().phase == .running
+    }
+
     var body: some View {
-        Group {
-            if hasCompletedOnboarding {
-                mainTabs
-            } else {
-                onboarding
+        ZStack {
+            Group {
+                if hasCompletedOnboarding {
+                    mainTabs
+                } else {
+                    onboarding
+                }
+            }
+
+            if isShowingAnalysisSplash {
+                analysisSplashView
+                    .transition(.opacity)
+                    .zIndex(1)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: isShowingAnalysisSplash)
         .onAppear {
             restoreNavigationState()
+            refreshAnalysisState()
         }
         .onChange(of: selectedTab) { _, newTab in
             selectedTabValue = newTab.rawValue
@@ -113,6 +159,48 @@ struct ContentView: View {
             refreshAnalysisState()
         }
         .onOpenURL(perform: handleIncomingURL)
+    }
+
+    private var analysisSplashView: some View {
+        ZStack {
+            Color(.systemBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+
+                Text(AppCopy.title)
+                    .font(.largeTitle.bold())
+
+                ProgressView()
+                    .controlSize(.large)
+                    .padding(.top, 4)
+
+                VStack(spacing: 6) {
+                    Text(AppCopy.analysisRunningTitle)
+                        .font(.title3.weight(.semibold))
+
+                    Text(
+                        analysisStatus.message
+                            ?? AppCopy.analysisRunningBody(
+                                backendName: AIBackendSettings.selectedBackend.displayName,
+                                isImage: true
+                            )
+                    )
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 32)
+            }
+            .frame(maxWidth: 420)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(AppCopy.title). \(AppCopy.analysisRunningTitle)")
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     private var mainTabs: some View {
@@ -726,7 +814,8 @@ struct ContentView: View {
         textEditHistory = TextEditHistoryStore.loadHistory()
         analysisStatus = ScreenshotAnalysisStatusStore.load()
         removeStaleHistoryPathIfNeeded()
-        navigateToRunningAnalysisIfNeeded()
+        prepareRunningAnalysisUIIfNeeded()
+        navigateToFinishedAnalysisIfNeeded()
         resumePendingAnalysesIfNeeded()
     }
 
@@ -735,12 +824,26 @@ struct ContentView: View {
         textEditHistory = TextEditHistoryStore.loadHistory()
         analysisStatus = ScreenshotAnalysisStatusStore.load()
 
-        if let restoredTab = ContentTab(rawValue: selectedTabValue) {
-            selectedTab = restoredTab
-        }
-
         if let restoredPane = SetupPane(rawValue: selectedSetupPaneValue) {
             selectedSetupPane = restoredPane
+        }
+
+        // While a shortcut/Action Button analysis is in flight, skip restoring the
+        // previous history detail so it does not flash under the splash screen.
+        if analysisStatus.phase == .running {
+            shouldRevealAnalysisWhenFinished = true
+            hasCompletedOnboarding = true
+            selectedHistoryPane = .screenshots
+            selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
+            selectedTab = .history
+            selectedTabValue = ContentTab.history.rawValue
+            historyPath = []
+            selectedHistoryAnalysisID = ""
+            return
+        }
+
+        if let restoredTab = ContentTab(rawValue: selectedTabValue) {
+            selectedTab = restoredTab
         }
 
         if let restoredPane = HistoryPane(rawValue: selectedHistoryPaneValue) {
@@ -767,8 +870,31 @@ struct ContentView: View {
         }
     }
 
-    private func navigateToRunningAnalysisIfNeeded() {
-        guard analysisStatus.phase == .running,
+    private func prepareRunningAnalysisUIIfNeeded() {
+        guard analysisStatus.phase == .running else {
+            return
+        }
+
+        shouldRevealAnalysisWhenFinished = true
+        hasCompletedOnboarding = true
+        onboardingStepValue = OnboardingStep.intro.rawValue
+        selectedHistoryPane = .screenshots
+        selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
+        selectedTab = .history
+        selectedTabValue = ContentTab.history.rawValue
+
+        // Keep the previous session off-screen under the splash until this run finishes.
+        if !historyPath.isEmpty {
+            historyPath = []
+        }
+        if !selectedHistoryAnalysisID.isEmpty {
+            selectedHistoryAnalysisID = ""
+        }
+    }
+
+    private func navigateToFinishedAnalysisIfNeeded() {
+        guard shouldRevealAnalysisWhenFinished,
+              analysisStatus.phase == .completed || analysisStatus.phase == .failed,
               let analysisID = analysisStatus.analysisID,
               analyses.contains(where: { $0.id == analysisID }),
               !autoNavigatedAnalysisIDs.contains(analysisID)
@@ -776,6 +902,7 @@ struct ContentView: View {
             return
         }
 
+        shouldRevealAnalysisWhenFinished = false
         autoNavigatedAnalysisIDs.insert(analysisID)
         hasCompletedOnboarding = true
         onboardingStepValue = OnboardingStep.intro.rawValue
@@ -818,8 +945,13 @@ struct ContentView: View {
             ),
             analysisID: analysis.id
         )
+        let backgroundTask = AnalysisBackgroundTask(name: "Screenshot analysis")
 
         Task {
+            let notificationAuthorizationTask = Task {
+                await ScreenshotAnalysisNotificationService.requestAuthorizationIfNeeded()
+            }
+
             do {
                 let resumedAnalysis = try await resumedScreenshotAnalysis(for: analysis) { message in
                     ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysis.id)
@@ -833,16 +965,21 @@ struct ContentView: View {
                     isComplete: true
                 ))
                 ScreenshotAnalysisStatusStore.markCompleted(AppCopy.shortcutAnalysisComplete, analysisID: analysis.id)
+                await notificationAuthorizationTask.value
+                await ScreenshotAnalysisNotificationService.notifyCompleted(analysisID: analysis.id)
 
                 await MainActor.run {
+                    backgroundTask.end()
                     resumingAnalysisIDs.remove(analysis.id)
                     refreshAnalysisState()
                 }
             } catch {
+                notificationAuthorizationTask.cancel()
                 let message = AppCopy.analysisFailedMessage(error)
                 ScreenshotAnalysisStatusStore.markFailed(message, analysisID: analysis.id)
 
                 await MainActor.run {
+                    backgroundTask.end()
                     resumingAnalysisIDs.remove(analysis.id)
                     refreshAnalysisState()
                 }
