@@ -67,5 +67,5 @@ Do **not** point this workflow at an Xcode **beta** — that is the problem you 
 
 ## Local notes
 
-- `FoundationModels` (Apple Intelligence backend) is compiled only when the SDK provides it (`canImport`). Builds from stable Xcode still ship OpenAI / Claude; on-device Apple analysis is simply unavailable until a release SDK includes those APIs.  
+- `FoundationModels` **text** compiles when the SDK provides the module (`canImport`). **Image** prompts use `Attachment`, which is not in stable Xcode 26.x used by CI — that path is compile-gated off in `AIBackend.appleImageResponse` so archives succeed. Flip the `#if false` there only on a beta toolchain for local experiments; leave it off for TestFlight. OpenAI / Claude image analysis is unaffected.
 - Keyboard lexicon `WordFrequencies.json` is generated in the Xcode build phase (needs network once for `wordfreq` on the runner).

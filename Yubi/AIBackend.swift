@@ -286,7 +286,15 @@ enum AIBackendClient {
     }
 
     private static func appleImageResponse(instructions: String, prompt: String, cgImage: CGImage) async throws -> String {
-        #if canImport(FoundationModels)
+        // Multimodal prompts need FoundationModels.Attachment (iOS 27 SDK). Stable release
+        // Xcode on CI (e.g. 26.3) can import FoundationModels for text, but Attachment is
+        // missing — and `#available(iOS 27, *)` does not hide symbols from the type checker.
+        //
+        // Keep the vision implementation behind a hard compile-time off switch until the
+        // App Store-accepting toolchain ships Attachment. Local beta Xcode can flip this to
+        // `true` for day-to-day experiments; TestFlight builds leave it false.
+        // Screenshot Apple-backend flow still works via Vision OCR + appleTextResponse.
+        #if false && canImport(FoundationModels)
         if #available(iOS 27.0, *) {
             let model = SystemLanguageModel.default
             guard model.isAvailable else {
@@ -300,6 +308,8 @@ enum AIBackendClient {
             }
             return try nonEmptyCleanedOutput(response.content)
         }
+        #else
+        _ = (instructions, prompt, cgImage)
         #endif
 
         throw AIBackendError.modelUnavailable
