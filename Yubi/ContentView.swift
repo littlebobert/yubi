@@ -67,13 +67,13 @@ struct ContentView: View {
     @AppStorage("YubiSelectedHistoryAnalysisID") private var selectedHistoryAnalysisID = ""
     @AppStorage("YubiSelectedHistoryPane") private var selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
     @AppStorage("YubiOnboardingStep") private var onboardingStepValue = OnboardingStep.intro.rawValue
-    @State private var selectedTab: ContentTab = .intro
-    @State private var selectedSetupPane: SetupPane = .screenshots
-    @State private var selectedHistoryPane: HistoryPane = .screenshots
-    @State private var historyPath: [UUID] = []
-    @State private var analyses = ScreenshotAnalysisStore.loadHistory()
-    @State private var textEditHistory = TextEditHistoryStore.loadHistory()
-    @State private var analysisStatus = ScreenshotAnalysisStatusStore.load()
+    @State private var selectedTab: ContentTab
+    @State private var selectedSetupPane: SetupPane
+    @State private var selectedHistoryPane: HistoryPane
+    @State private var historyPath: [UUID]
+    @State private var analyses: [ScreenshotAnalysis]
+    @State private var textEditHistory: [TextEditHistoryItem]
+    @State private var analysisStatus: ScreenshotAnalysisStatus
     @State private var selectedAIBackend = AIBackendSettings.selectedBackend
     @State private var openAIAPIKey = AIBackendSettings.openAIAPIKey
     @State private var claudeAPIKey = AIBackendSettings.claudeAPIKey
@@ -82,7 +82,6 @@ struct ContentView: View {
     @State private var isAnalyzingShortcutText = false
     @State private var resumingAnalysisIDs: Set<UUID> = []
     @State private var autoNavigatedAnalysisIDs: Set<UUID> = []
-    @State private var shouldRevealAnalysisWhenFinished = false
     @FocusState private var focusedAPIKeyField: APIKeyField?
 
     private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -91,37 +90,30 @@ struct ContentView: View {
         OnboardingStep(rawValue: onboardingStepValue) ?? .intro
     }
 
-    private var isShowingAnalysisSplash: Bool {
-        guard hasCompletedOnboarding else {
-            return false
-        }
-
-        if analysisStatus.phase == .running {
-            return true
-        }
-
-        // Warm Action Button launches can mark running before @State catches up.
-        return ScreenshotAnalysisStatusStore.load().phase == .running
+    init() {
+        // Prefer the in-flight Action Button / shortcut analysis for the first paint so the
+        // previous tab/detail never flashes before navigation catches up.
+        let bootstrap = Self.bootstrapNavigation()
+        _analyses = State(initialValue: bootstrap.analyses)
+        _textEditHistory = State(initialValue: TextEditHistoryStore.loadHistory())
+        _analysisStatus = State(initialValue: bootstrap.analysisStatus)
+        _selectedTab = State(initialValue: bootstrap.selectedTab)
+        _selectedSetupPane = State(initialValue: bootstrap.selectedSetupPane)
+        _selectedHistoryPane = State(initialValue: bootstrap.selectedHistoryPane)
+        _historyPath = State(initialValue: bootstrap.historyPath)
     }
 
     var body: some View {
-        ZStack {
-            Group {
-                if hasCompletedOnboarding {
-                    mainTabs
-                } else {
-                    onboarding
-                }
-            }
-
-            if isShowingAnalysisSplash {
-                analysisSplashView
-                    .transition(.opacity)
-                    .zIndex(1)
+        Group {
+            if hasCompletedOnboarding || analysisStatus.phase == .running {
+                mainTabs
+            } else {
+                onboarding
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isShowingAnalysisSplash)
         .onAppear {
+            // Sync AppStorage / persisted nav after the first frame already targeted the
+            // running analysis when one exists.
             restoreNavigationState()
             refreshAnalysisState()
         }
@@ -159,48 +151,6 @@ struct ContentView: View {
             refreshAnalysisState()
         }
         .onOpenURL(perform: handleIncomingURL)
-    }
-
-    private var analysisSplashView: some View {
-        ZStack {
-            Color(.systemBackground)
-                .ignoresSafeArea()
-
-            VStack(spacing: 20) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-
-                Text(AppCopy.title)
-                    .font(.largeTitle.bold())
-
-                ProgressView()
-                    .controlSize(.large)
-                    .padding(.top, 4)
-
-                VStack(spacing: 6) {
-                    Text(AppCopy.analysisRunningTitle)
-                        .font(.title3.weight(.semibold))
-
-                    Text(
-                        analysisStatus.message
-                            ?? AppCopy.analysisRunningBody(
-                                backendName: AIBackendSettings.selectedBackend.displayName,
-                                isImage: true
-                            )
-                    )
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                }
-                .padding(.horizontal, 32)
-            }
-            .frame(maxWidth: 420)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(AppCopy.title). \(AppCopy.analysisRunningTitle)")
-        .accessibilityAddTraits(.updatesFrequently)
     }
 
     private var mainTabs: some View {
@@ -814,48 +764,33 @@ struct ContentView: View {
         textEditHistory = TextEditHistoryStore.loadHistory()
         analysisStatus = ScreenshotAnalysisStatusStore.load()
         removeStaleHistoryPathIfNeeded()
-        prepareRunningAnalysisUIIfNeeded()
-        navigateToFinishedAnalysisIfNeeded()
+        navigateToActiveAnalysisIfNeeded()
         resumePendingAnalysesIfNeeded()
     }
 
     private func restoreNavigationState() {
-        analyses = ScreenshotAnalysisStore.loadHistory()
+        let bootstrap = Self.bootstrapNavigation(
+            selectedTabValue: selectedTabValue,
+            selectedSetupPaneValue: selectedSetupPaneValue,
+            selectedHistoryPaneValue: selectedHistoryPaneValue,
+            selectedHistoryAnalysisID: selectedHistoryAnalysisID
+        )
+        analyses = bootstrap.analyses
         textEditHistory = TextEditHistoryStore.loadHistory()
-        analysisStatus = ScreenshotAnalysisStatusStore.load()
+        analysisStatus = bootstrap.analysisStatus
+        selectedTab = bootstrap.selectedTab
+        selectedSetupPane = bootstrap.selectedSetupPane
+        selectedHistoryPane = bootstrap.selectedHistoryPane
+        historyPath = bootstrap.historyPath
 
-        if let restoredPane = SetupPane(rawValue: selectedSetupPaneValue) {
-            selectedSetupPane = restoredPane
-        }
-
-        // While a shortcut/Action Button analysis is in flight, skip restoring the
-        // previous history detail so it does not flash under the splash screen.
-        if analysisStatus.phase == .running {
-            shouldRevealAnalysisWhenFinished = true
+        if bootstrap.didForceRunningAnalysis,
+           let analysisID = bootstrap.historyPath.last {
+            // Persist so warm launches and back navigation stay on this run.
             hasCompletedOnboarding = true
-            selectedHistoryPane = .screenshots
-            selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
-            selectedTab = .history
             selectedTabValue = ContentTab.history.rawValue
-            historyPath = []
-            selectedHistoryAnalysisID = ""
-            return
-        }
-
-        if let restoredTab = ContentTab(rawValue: selectedTabValue) {
-            selectedTab = restoredTab
-        }
-
-        if let restoredPane = HistoryPane(rawValue: selectedHistoryPaneValue) {
-            selectedHistoryPane = restoredPane
-        }
-
-        if selectedTab == .history,
-           let analysisID = UUID(uuidString: selectedHistoryAnalysisID),
-           analyses.contains(where: { $0.id == analysisID }) {
-            historyPath = [analysisID]
-        } else if selectedTab != .history {
-            historyPath = []
+            selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
+            selectedHistoryAnalysisID = analysisID.uuidString
+            autoNavigatedAnalysisIDs.insert(analysisID)
         }
     }
 
@@ -870,40 +805,32 @@ struct ContentView: View {
         }
     }
 
-    private func prepareRunningAnalysisUIIfNeeded() {
-        guard analysisStatus.phase == .running else {
-            return
-        }
-
-        shouldRevealAnalysisWhenFinished = true
-        hasCompletedOnboarding = true
-        onboardingStepValue = OnboardingStep.intro.rawValue
-        selectedHistoryPane = .screenshots
-        selectedHistoryPaneValue = HistoryPane.screenshots.rawValue
-        selectedTab = .history
-        selectedTabValue = ContentTab.history.rawValue
-
-        // Keep the previous session off-screen under the splash until this run finishes.
-        if !historyPath.isEmpty {
-            historyPath = []
-        }
-        if !selectedHistoryAnalysisID.isEmpty {
-            selectedHistoryAnalysisID = ""
-        }
-    }
-
-    private func navigateToFinishedAnalysisIfNeeded() {
-        guard shouldRevealAnalysisWhenFinished,
-              analysisStatus.phase == .completed || analysisStatus.phase == .failed,
+    private func navigateToActiveAnalysisIfNeeded() {
+        guard analysisStatus.phase == .running
+                || analysisStatus.phase == .completed
+                || analysisStatus.phase == .failed,
               let analysisID = analysisStatus.analysisID,
-              analyses.contains(where: { $0.id == analysisID }),
-              !autoNavigatedAnalysisIDs.contains(analysisID)
+              analyses.contains(where: { $0.id == analysisID })
         else {
             return
         }
 
-        shouldRevealAnalysisWhenFinished = false
+        // While a run is in flight, always keep the detail on that analysis so the
+        // previous session cannot stick on screen after an Action Button launch.
+        if analysisStatus.phase == .running {
+            presentAnalysis(analysisID)
+            return
+        }
+
+        guard !autoNavigatedAnalysisIDs.contains(analysisID) else {
+            return
+        }
+
         autoNavigatedAnalysisIDs.insert(analysisID)
+        presentAnalysis(analysisID)
+    }
+
+    private func presentAnalysis(_ analysisID: UUID) {
         hasCompletedOnboarding = true
         onboardingStepValue = OnboardingStep.intro.rawValue
         selectedHistoryPane = .screenshots
@@ -912,9 +839,65 @@ struct ContentView: View {
         selectedTabValue = ContentTab.history.rawValue
         selectedHistoryAnalysisID = analysisID.uuidString
 
-        if historyPath.last != analysisID {
+        if historyPath != [analysisID] {
             historyPath = [analysisID]
         }
+    }
+
+    private struct BootstrapNavigation {
+        let analyses: [ScreenshotAnalysis]
+        let analysisStatus: ScreenshotAnalysisStatus
+        let selectedTab: ContentTab
+        let selectedSetupPane: SetupPane
+        let selectedHistoryPane: HistoryPane
+        let historyPath: [UUID]
+        let didForceRunningAnalysis: Bool
+    }
+
+    private static func bootstrapNavigation(
+        selectedTabValue: String = UserDefaults.standard.string(forKey: "YubiSelectedTab") ?? ContentTab.intro.rawValue,
+        selectedSetupPaneValue: String = UserDefaults.standard.string(forKey: "YubiSelectedSetupPane") ?? SetupPane.screenshots.rawValue,
+        selectedHistoryPaneValue: String = UserDefaults.standard.string(forKey: "YubiSelectedHistoryPane") ?? HistoryPane.screenshots.rawValue,
+        selectedHistoryAnalysisID: String = UserDefaults.standard.string(forKey: "YubiSelectedHistoryAnalysisID") ?? ""
+    ) -> BootstrapNavigation {
+        let analyses = ScreenshotAnalysisStore.loadHistory()
+        let analysisStatus = ScreenshotAnalysisStatusStore.load()
+        let setupPane = SetupPane(rawValue: selectedSetupPaneValue) ?? .screenshots
+
+        if analysisStatus.phase == .running,
+           let analysisID = analysisStatus.analysisID,
+           analyses.contains(where: { $0.id == analysisID }) {
+            return BootstrapNavigation(
+                analyses: analyses,
+                analysisStatus: analysisStatus,
+                selectedTab: .history,
+                selectedSetupPane: setupPane,
+                selectedHistoryPane: .screenshots,
+                historyPath: [analysisID],
+                didForceRunningAnalysis: true
+            )
+        }
+
+        let selectedTab = ContentTab(rawValue: selectedTabValue) ?? .intro
+        let historyPane = HistoryPane(rawValue: selectedHistoryPaneValue) ?? .screenshots
+        let historyPath: [UUID]
+        if selectedTab == .history,
+           let analysisID = UUID(uuidString: selectedHistoryAnalysisID),
+           analyses.contains(where: { $0.id == analysisID }) {
+            historyPath = [analysisID]
+        } else {
+            historyPath = []
+        }
+
+        return BootstrapNavigation(
+            analyses: analyses,
+            analysisStatus: analysisStatus,
+            selectedTab: selectedTab,
+            selectedSetupPane: setupPane,
+            selectedHistoryPane: historyPane,
+            historyPath: historyPath,
+            didForceRunningAnalysis: false
+        )
     }
 
     private func resumePendingAnalysesIfNeeded() {
