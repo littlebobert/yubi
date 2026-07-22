@@ -314,15 +314,56 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     fileprivate enum Theme {
-        static let panelBackground = UIColor(red: 0.88, green: 0.89, blue: 0.92, alpha: 1.0)
-        static let keyBackground = UIColor.white
-        static let controlBackground = UIColor(red: 0.68, green: 0.71, blue: 0.76, alpha: 1.0)
-        static let activeControlBackground = UIColor(red: 0.58, green: 0.61, blue: 0.66, alpha: 1.0)
-        static let border = UIColor(red: 0.68, green: 0.69, blue: 0.74, alpha: 1.0)
-        static let text = UIColor.black
-        static let mutedText = UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1.0)
-        static let accent = UIColor(red: 0.38, green: 0.40, blue: 0.44, alpha: 1.0)
-        static let keyShadow = UIColor(red: 0.42, green: 0.44, blue: 0.49, alpha: 1.0)
+        /// Leave clear so the system keyboard backdrop shows through.
+        static let panelBackground = UIColor.clear
+
+        static let keyBackground = UIColor { traits in
+            switch traits.userInterfaceStyle {
+            case .dark:
+                return UIColor(white: 1, alpha: 0.30)
+            default:
+                return .white
+            }
+        }
+
+        static let controlBackground = UIColor { traits in
+            switch traits.userInterfaceStyle {
+            case .dark:
+                return UIColor(white: 1, alpha: 0.16)
+            default:
+                return UIColor(red: 0.68, green: 0.71, blue: 0.76, alpha: 1.0)
+            }
+        }
+
+        static let activeControlBackground = UIColor { traits in
+            switch traits.userInterfaceStyle {
+            case .dark:
+                return UIColor(white: 1, alpha: 0.28)
+            default:
+                return UIColor(red: 0.58, green: 0.61, blue: 0.66, alpha: 1.0)
+            }
+        }
+
+        static let border = UIColor { traits in
+            switch traits.userInterfaceStyle {
+            case .dark:
+                return UIColor(white: 1, alpha: 0.14)
+            default:
+                return UIColor(red: 0.68, green: 0.69, blue: 0.74, alpha: 1.0)
+            }
+        }
+
+        static let text = UIColor.label
+        static let mutedText = UIColor.secondaryLabel
+        static let accent = UIColor.secondaryLabel
+        static let keyShadow = UIColor { traits in
+            switch traits.userInterfaceStyle {
+            case .dark:
+                return UIColor.black.withAlphaComponent(0.55)
+            default:
+                return UIColor(red: 0.42, green: 0.44, blue: 0.49, alpha: 1.0)
+            }
+        }
 
         static let letterFont = UIFont.systemFont(ofSize: 23, weight: .regular)
         static let controlFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
@@ -382,8 +423,21 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        applyRootBackground()
         isTranslatingSelection = false
         refreshTranslationControls()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else {
+            return
+        }
+
+        applyRootBackground()
+        // Layer colors are not dynamic; rebuild chrome so borders/shadows match appearance.
+        renderKeyboard()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -410,7 +464,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func configureRootView() {
-        view.backgroundColor = Theme.panelBackground
+        applyRootBackground()
 
         rootStack.axis = .vertical
         rootStack.spacing = 8
@@ -433,6 +487,14 @@ final class KeyboardViewController: UIInputViewController {
         heightConstraint.priority = .defaultHigh
         heightConstraint.isActive = true
         self.heightConstraint = heightConstraint
+    }
+
+    private func applyRootBackground() {
+        // Transparent so iOS's standard keyboard backdrop is visible behind the keys.
+        view.isOpaque = false
+        view.backgroundColor = Theme.panelBackground
+        inputView?.isOpaque = false
+        inputView?.backgroundColor = .clear
     }
 
     private func loadSupplementaryLexicon() {
@@ -647,9 +709,9 @@ final class KeyboardViewController: UIInputViewController {
     private func configureSuggestionButton(in band: UIView) {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.backgroundColor = Theme.keyBackground.withAlphaComponent(0.92)
+        button.backgroundColor = Theme.keyBackground
         button.layer.cornerRadius = 8
-        button.layer.borderColor = Theme.border.cgColor
+        button.layer.borderColor = Theme.border.resolvedColor(with: traitCollection).cgColor
         button.layer.borderWidth = 1
         button.titleLabel?.font = Theme.suggestionFont
         button.setTitleColor(Theme.mutedText, for: .normal)
@@ -1258,10 +1320,10 @@ final class KeyboardViewController: UIInputViewController {
         button.clipsToBounds = false
         button.layer.cornerRadius = 6
         button.layer.cornerCurve = .continuous
-        button.layer.borderColor = Theme.border.cgColor
+        button.layer.borderColor = Theme.border.resolvedColor(with: traitCollection).cgColor
         button.layer.borderWidth = 0
-        button.layer.shadowColor = Theme.keyShadow.cgColor
-        button.layer.shadowOpacity = 0.28
+        button.layer.shadowColor = Theme.keyShadow.resolvedColor(with: traitCollection).cgColor
+        button.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0.45 : 0.28
         button.layer.shadowRadius = 0
         button.layer.shadowOffset = CGSize(width: 0, height: 1.2)
         button.titleLabel?.textAlignment = .center
@@ -1274,14 +1336,14 @@ final class KeyboardViewController: UIInputViewController {
                 string: title,
                 attributes: [
                     .font: Theme.spaceFont,
-                    .foregroundColor: Theme.mutedText
+                    .foregroundColor: Theme.mutedText.resolvedColor(with: traitCollection)
                 ]
             )
             titleText.append(NSAttributedString(
                 string: "\n\(subtitle)",
                 attributes: [
                     .font: Theme.hintFont,
-                    .foregroundColor: Theme.accent
+                    .foregroundColor: Theme.accent.resolvedColor(with: traitCollection)
                 ]
             ))
             button.setAttributedTitle(titleText, for: .normal)
