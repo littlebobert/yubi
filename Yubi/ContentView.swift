@@ -143,8 +143,18 @@ struct ContentView: View {
             AIBackendSettings.claudeAPIKey = newKey
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            switch newPhase {
+            case .active:
                 refreshAnalysisState()
+                // Keep the Yubi cover up until this destination has committed,
+                // so resume does not flash the pre-background tab.
+                Task { @MainActor in
+                    ResumeCoverController.shared.hide()
+                }
+            case .inactive, .background:
+                ResumeCoverController.shared.show()
+            @unknown default:
+                break
             }
         }
         .onReceive(refreshTimer) { _ in
