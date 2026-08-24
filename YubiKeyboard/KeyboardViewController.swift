@@ -1111,7 +1111,11 @@ final class KeyboardViewController: UIInputViewController {
             do {
                 let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
                 try Task.checkCancellation()
-                self.textDocumentProxy.insertText(translation)
+                self.textDocumentProxy.insertText(self.replacementText(
+                    sourceText: selectedText,
+                    translation: translation,
+                    targetLanguage: self.outputLanguage
+                ))
                 self.saveTextEditHistory(
                     sourceText: selectedText,
                     translatedText: translation,
@@ -1153,7 +1157,11 @@ final class KeyboardViewController: UIInputViewController {
             do {
                 let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
                 try Task.checkCancellation()
-                self.textDocumentProxy.insertText(translation)
+                self.textDocumentProxy.insertText(self.replacementText(
+                    sourceText: selectedText,
+                    translation: translation,
+                    targetLanguage: targetLanguage
+                ))
                 self.saveTextEditHistory(
                     sourceText: selectedText,
                     translatedText: translation,
@@ -1170,6 +1178,24 @@ final class KeyboardViewController: UIInputViewController {
             self.translationTask = nil
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
+        }
+    }
+
+    private func replacementText(
+        sourceText: String,
+        translation: String,
+        targetLanguage: OutputLanguage
+    ) -> String {
+        let source = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translated = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch targetLanguage {
+        case .japanese:
+            return "\(translated)\n\(source)"
+        case .english:
+            return "\(source)\n\(translated)"
+        default:
+            return translation
         }
     }
 
