@@ -148,6 +148,23 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private enum IncludeOriginalPreference {
+        private static let defaultsKey = "YubiIncludeOriginal"
+
+        static var persisted: Bool {
+            // Absent key means the user has never chosen; keep the original text as before.
+            guard UserDefaults.standard.object(forKey: defaultsKey) != nil else {
+                return true
+            }
+
+            return UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+
+        static func persist(_ includesOriginal: Bool) {
+            UserDefaults.standard.set(includesOriginal, forKey: defaultsKey)
+        }
+    }
+
     private enum KeyboardCopy {
         private enum InterfaceLanguage {
             case english
@@ -270,6 +287,18 @@ final class KeyboardViewController: UIInputViewController {
             localized(en: "Casual", ja: "カジュアル", zhHans: "随意", zhHant: "隨意", ko: "반말")
         }
 
+        static var includeOriginal: String {
+            localized(en: "Include original too", ja: "原文も含める", zhHans: "同时包含原文", zhHant: "同時包含原文", ko: "원문도 포함")
+        }
+
+        static var returnKey: String {
+            localized(en: "Return", ja: "改行", zhHans: "换行", zhHant: "換行", ko: "줄바꿈")
+        }
+
+        static var deleteKey: String {
+            localized(en: "Delete", ja: "削除", zhHans: "删除", zhHant: "刪除", ko: "삭제")
+        }
+
         static func unavailable(_ language: String) -> String {
             switch InterfaceLanguage.current {
             case .english:
@@ -377,7 +406,8 @@ final class KeyboardViewController: UIInputViewController {
         static let systemReturnKeyWidth: CGFloat = 96
         static let homeRowInset: CGFloat = 24
         static let zRowInset: CGFloat = 64
-        static let standardKeyboardHeight: CGFloat = 200
+        static let translatorEdgeKeyWidth: CGFloat = 54
+        static let standardKeyboardHeight: CGFloat = 236
     }
 
     private let autocorrector = Autocorrector()
@@ -396,6 +426,9 @@ final class KeyboardViewController: UIInputViewController {
     private var toneButton: UIButton?
     private var privacyHintLabel: UILabel?
     private var deleteActionButton: UIButton?
+    private var returnActionButton: UIButton?
+    private var includeOriginalButton: UIButton?
+    private var includeOriginalCheckmark: UIImageView?
     private var spaceButton: UIButton?
     private var spaceSpinner: UIActivityIndicatorView?
     private var spaceTranslationStack: UIStackView?
@@ -412,6 +445,7 @@ final class KeyboardViewController: UIInputViewController {
     private var autocorrectionHistory: [AppliedAutocorrection] = []
     private var outputLanguage = OutputLanguage.persisted
     private var japaneseTone = JapaneseTone.persisted
+    private var includesOriginal = IncludeOriginalPreference.persisted
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -516,6 +550,9 @@ final class KeyboardViewController: UIInputViewController {
         modeButton = nil
         toneButton = nil
         deleteActionButton = nil
+        returnActionButton = nil
+        includeOriginalButton = nil
+        includeOriginalCheckmark = nil
         spaceButton = nil
         spaceSpinner = nil
         spaceTranslationStack = nil
@@ -532,6 +569,7 @@ final class KeyboardViewController: UIInputViewController {
         let controls = UIStackView(arrangedSubviews: [
             makePickerControlsRow(),
             makeTranslationActionRow(),
+            makeIncludeOriginalRow(),
             makePrivacyHintLabel()
         ])
         controls.axis = .vertical
@@ -622,16 +660,31 @@ final class KeyboardViewController: UIInputViewController {
 
         let button = ExpandedHitButton(type: .system)
         configureButton(button, title: "", style: .space)
+        // Two edge keys leave the translate label little room; let long localizations shrink.
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.7
         button.addAction(UIAction { [weak self] _ in
             self?.handleTranslateSelectionTap()
         }, for: .touchUpInside)
         configureSpaceSpinner(in: button)
         spaceButton = button
 
+        let returnButton = ExpandedHitButton(type: .system)
+        configureButton(returnButton, title: "↵", style: .space)
+        returnButton.titleLabel?.font = Theme.edgeControlFont
+        returnButton.accessibilityLabel = KeyboardCopy.returnKey
+        returnButton.widthAnchor.constraint(equalToConstant: Theme.translatorEdgeKeyWidth).isActive = true
+        returnButton.addAction(UIAction { [weak self] _ in
+            guard let self, !self.isTranslatingSelection else { return }
+            self.handle(.returnKey)
+        }, for: .touchUpInside)
+        returnActionButton = returnButton
+
         let deleteButton = DeleteKeyButton(type: .system)
         configureButton(deleteButton, title: "⌫", style: .space)
         deleteButton.titleLabel?.font = Theme.edgeControlFont
-        deleteButton.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        deleteButton.accessibilityLabel = KeyboardCopy.deleteKey
+        deleteButton.widthAnchor.constraint(equalToConstant: Theme.translatorEdgeKeyWidth).isActive = true
         deleteButton.onPressBegan = { [weak self] in
             guard let self, !self.isTranslatingSelection else { return }
             self.beginDeletePress()
@@ -642,8 +695,63 @@ final class KeyboardViewController: UIInputViewController {
         deleteActionButton = deleteButton
 
         row.addArrangedSubview(button)
+        row.addArrangedSubview(returnButton)
         row.addArrangedSubview(deleteButton)
         return row
+    }
+
+    private func makeIncludeOriginalRow() -> UIView {
+        let button = ExpandedHitButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = .clear
+        button.accessibilityLabel = KeyboardCopy.includeOriginal
+
+        let checkmark = UIImageView()
+        checkmark.translatesAutoresizingMaskIntoConstraints = false
+        checkmark.contentMode = .scaleAspectFit
+        checkmark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+
+        let label = UILabel()
+        label.text = KeyboardCopy.includeOriginal
+        label.font = Theme.suggestionFont
+        label.textColor = Theme.mutedText
+
+        let stack = UIStackView(arrangedSubviews: [checkmark, label])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isUserInteractionEnabled = false
+
+        button.addSubview(stack)
+        NSLayoutConstraint.activate([
+            button.heightAnchor.constraint(equalToConstant: 26),
+            stack.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: button.centerYAnchor)
+        ])
+
+        button.addAction(UIAction { [weak self] _ in
+            self?.toggleIncludesOriginal()
+        }, for: .touchUpInside)
+
+        includeOriginalButton = button
+        includeOriginalCheckmark = checkmark
+        refreshIncludeOriginalControl()
+
+        return button
+    }
+
+    private func toggleIncludesOriginal() {
+        includesOriginal.toggle()
+        IncludeOriginalPreference.persist(includesOriginal)
+        performKeyFeedback()
+        refreshIncludeOriginalControl()
+    }
+
+    private func refreshIncludeOriginalControl() {
+        includeOriginalCheckmark?.image = UIImage(systemName: includesOriginal ? "checkmark.square.fill" : "square")
+        includeOriginalCheckmark?.tintColor = includesOriginal ? Theme.text : Theme.mutedText
+        includeOriginalButton?.accessibilityTraits = includesOriginal ? [.button, .selected] : .button
     }
 
     private func makePrivacyHintLabel() -> UIView {
@@ -1189,13 +1297,15 @@ final class KeyboardViewController: UIInputViewController {
         let source = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         let translated = translation.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        guard includesOriginal else {
+            return translated
+        }
+
         switch targetLanguage {
-        case .japanese:
-            return "\(translated)\n\(source)"
         case .english:
             return "\(source)\n\(translated)"
         default:
-            return translation
+            return "\(translated)\n\(source)"
         }
     }
 
@@ -1239,6 +1349,9 @@ final class KeyboardViewController: UIInputViewController {
 
             self.deleteActionButton?.isEnabled = !self.isTranslatingSelection
             self.deleteActionButton?.alpha = self.isTranslatingSelection ? 0.62 : 1
+
+            self.returnActionButton?.isEnabled = !self.isTranslatingSelection
+            self.returnActionButton?.alpha = self.isTranslatingSelection ? 0.62 : 1
 
             if self.isTranslatingSelection {
                 self.spaceButton?.setTitle("", for: .normal)
