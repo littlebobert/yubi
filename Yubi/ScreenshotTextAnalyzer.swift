@@ -13,11 +13,20 @@ private let screenshotAnalyzerLogger = Logger(
 )
 
 enum ScreenshotTextAnalyzer {
-    static func analyzeImage(_ cgImage: CGImage, status: AIBackendClient.StatusHandler? = nil) async throws -> ScreenshotImageAnalysis {
+    static func analyzeImage(
+        _ cgImage: CGImage,
+        status: AIBackendClient.StatusHandler? = nil,
+        partialResult: AIBackendClient.PartialResultHandler? = nil
+    ) async throws -> ScreenshotImageAnalysis {
         let targetLanguage = defaultOutputLanguagePromptName()
         let backend = AIBackendSettings.selectedBackend
         screenshotAnalyzerLogger.info("Starting image analysis; backend=\(backend.displayName, privacy: .public), targetLanguage=\(targetLanguage, privacy: .public)")
-        let output = try await AIBackendClient.analyzeScreenshotImage(cgImage, targetLanguage: targetLanguage, status: status)
+        let output = try await AIBackendClient.analyzeScreenshotImage(
+            cgImage,
+            targetLanguage: targetLanguage,
+            status: status,
+            partialResult: partialResult
+        )
         screenshotAnalyzerLogger.info("Image analysis completed; outputCharacters=\(output.count, privacy: .public)")
         return ScreenshotImageAnalysis(
             result: output,
@@ -25,13 +34,22 @@ enum ScreenshotTextAnalyzer {
         )
     }
 
-    static func analyze(_ text: String, status: AIBackendClient.StatusHandler? = nil) async throws -> String {
+    static func analyze(
+        _ text: String,
+        status: AIBackendClient.StatusHandler? = nil,
+        partialResult: AIBackendClient.PartialResultHandler? = nil
+    ) async throws -> String {
         let targetLanguage = defaultOutputLanguagePromptName()
         let backend = AIBackendSettings.selectedBackend
         screenshotAnalyzerLogger.info("Starting text analysis; backend=\(backend.displayName, privacy: .public), targetLanguage=\(targetLanguage, privacy: .public)")
 
         do {
-            let output = try await AIBackendClient.analyzeScreenshotText(text, targetLanguage: targetLanguage, status: status)
+            let output = try await AIBackendClient.analyzeScreenshotText(
+                text,
+                targetLanguage: targetLanguage,
+                status: status,
+                partialResult: partialResult
+            )
             screenshotAnalyzerLogger.info("Text analysis completed; outputCharacters=\(output.count, privacy: .public)")
             return output
         } catch {

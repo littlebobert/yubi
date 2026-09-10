@@ -233,13 +233,7 @@ final class KeyboardViewController: UIInputViewController {
                     ko: "번역에는 가능한 경우 Apple의 개인정보 보호 온디바이스 모델을 사용합니다."
                 )
             case .openAI:
-                return localized(
-                    en: "Translation sends selected text to OpenAI using your API key.",
-                    ja: "翻訳では、選択したテキストをあなたのAPIキーでOpenAIに送信します。",
-                    zhHans: "翻译会使用你的 API 密钥将所选文本发送到 OpenAI。",
-                    zhHant: "翻譯會使用你的 API 金鑰將選取文字傳送到 OpenAI。",
-                    ko: "번역은 선택한 텍스트를 사용자의 API 키로 OpenAI에 보냅니다."
-                )
+                return "Translation sends selected text to OpenAI."
             case .claudeFable:
                 return localized(
                     en: "Translation sends selected text to Claude Fable 5 using your API key.",
@@ -439,6 +433,7 @@ final class KeyboardViewController: UIInputViewController {
     private var currentWordTouches: [TouchObservation] = []
     private var isTranslatingSelection = false
     private var translationTask: Task<Void, Never>?
+    private var streamedReplacementText: String?
     private var shouldReturnToLettersAfterSpace = false
     private var pendingAutocorrection: AppliedAutocorrection?
     private var suggestionBarState: SuggestionBarState?
@@ -628,8 +623,9 @@ final class KeyboardViewController: UIInputViewController {
     private func makeJapaneseToneColumn() -> UIView {
         let button = ExpandedHitButton(type: .system)
         configureButton(button, title: japaneseTone.displayName, style: .space)
-        button.showsMenuAsPrimaryAction = true
-        button.menu = japaneseToneMenu()
+        button.addAction(UIAction { [weak self] _ in
+            self?.toggleJapaneseTone()
+        }, for: .touchUpInside)
         toneButton = button
 
         return makePickerColumn(labelText: KeyboardCopy.tone, button: button)
@@ -776,28 +772,22 @@ final class KeyboardViewController: UIInputViewController {
         })
     }
 
-    private func japaneseToneMenu() -> UIMenu {
-        UIMenu(children: JapaneseTone.allCases.map { tone in
-            UIAction(
-                title: tone.displayName,
-                state: tone == japaneseTone ? .on : .off
-            ) { [weak self] _ in
-                self?.setJapaneseTone(tone)
-            }
-        })
-    }
-
     private func setOutputLanguage(_ language: OutputLanguage) {
         outputLanguage = language
         outputLanguage.persist()
         renderKeyboard()
     }
 
+    private func toggleJapaneseTone() {
+        setJapaneseTone(japaneseTone == .polite ? .casual : .polite)
+    }
+
     private func setJapaneseTone(_ tone: JapaneseTone) {
         japaneseTone = tone
         japaneseTone.persist()
         toneButton?.setTitle(tone.displayName, for: .normal)
-        toneButton?.menu = japaneseToneMenu()
+        toneButton?.accessibilityValue = tone.displayName
+        performKeyFeedback()
         refreshTranslationControls()
     }
 
@@ -1213,22 +1203,36 @@ final class KeyboardViewController: UIInputViewController {
         performKeyFeedback()
         refreshSpaceKey()
 
+        let targetLanguage = outputLanguage
+        let targetTone = japaneseTone
+        streamedReplacementText = nil
         translationTask = Task { [weak self] in
             guard let self else { return }
 
             do {
-                let translation = try await self.translate(selectedText, to: self.outputLanguage, japaneseTone: self.japaneseTone)
+                let translation = try await self.translate(
+                    selectedText,
+                    to: targetLanguage,
+                    japaneseTone: targetTone,
+                    partialResult: { [weak self] partialTranslation in
+                        await self?.applyStreamingTranslation(
+                            partialTranslation,
+                            sourceText: selectedText,
+                            targetLanguage: targetLanguage
+                        )
+                    }
+                )
                 try Task.checkCancellation()
-                self.textDocumentProxy.insertText(self.replacementText(
+                self.applyCompletedTranslation(
+                    translation,
                     sourceText: selectedText,
-                    translation: translation,
-                    targetLanguage: self.outputLanguage
-                ))
+                    targetLanguage: targetLanguage
+                )
                 self.saveTextEditHistory(
                     sourceText: selectedText,
                     translatedText: translation,
-                    targetLanguage: self.outputLanguage,
-                    japaneseTone: self.japaneseTone
+                    targetLanguage: targetLanguage,
+                    japaneseTone: targetTone
                 )
             } catch is CancellationError {
                 return
@@ -1238,6 +1242,7 @@ final class KeyboardViewController: UIInputViewController {
             }
 
             self.translationTask = nil
+            self.streamedReplacementText = nil
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
         }
@@ -1259,17 +1264,29 @@ final class KeyboardViewController: UIInputViewController {
         performKeyFeedback()
         refreshTranslationControls()
 
+        streamedReplacementText = nil
         translationTask = Task { [weak self] in
             guard let self else { return }
 
             do {
-                let translation = try await self.translate(selectedText, to: targetLanguage, japaneseTone: targetTone)
+                let translation = try await self.translate(
+                    selectedText,
+                    to: targetLanguage,
+                    japaneseTone: targetTone,
+                    partialResult: { [weak self] partialTranslation in
+                        await self?.applyStreamingTranslation(
+                            partialTranslation,
+                            sourceText: selectedText,
+                            targetLanguage: targetLanguage
+                        )
+                    }
+                )
                 try Task.checkCancellation()
-                self.textDocumentProxy.insertText(self.replacementText(
+                self.applyCompletedTranslation(
+                    translation,
                     sourceText: selectedText,
-                    translation: translation,
                     targetLanguage: targetLanguage
-                ))
+                )
                 self.saveTextEditHistory(
                     sourceText: selectedText,
                     translatedText: translation,
@@ -1284,9 +1301,52 @@ final class KeyboardViewController: UIInputViewController {
             }
 
             self.translationTask = nil
+            self.streamedReplacementText = nil
             self.isTranslatingSelection = false
             self.refreshTranslationControls(afterDelay: 0.8)
         }
+    }
+
+    @MainActor
+    private func applyStreamingTranslation(
+        _ translation: String,
+        sourceText: String,
+        targetLanguage: OutputLanguage
+    ) {
+        guard !Task.isCancelled else {
+            return
+        }
+
+        let replacement = replacementText(
+            sourceText: sourceText,
+            translation: translation,
+            targetLanguage: targetLanguage
+        )
+        replaceStreamedText(with: replacement)
+    }
+
+    private func applyCompletedTranslation(
+        _ translation: String,
+        sourceText: String,
+        targetLanguage: OutputLanguage
+    ) {
+        let replacement = replacementText(
+            sourceText: sourceText,
+            translation: translation,
+            targetLanguage: targetLanguage
+        )
+        replaceStreamedText(with: replacement)
+    }
+
+    private func replaceStreamedText(with replacement: String) {
+        if let streamedReplacementText {
+            for _ in streamedReplacementText {
+                textDocumentProxy.deleteBackward()
+            }
+        }
+
+        textDocumentProxy.insertText(replacement)
+        streamedReplacementText = replacement
     }
 
     private func replacementText(
@@ -1399,13 +1459,19 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func translate(_ text: String, to targetLanguage: OutputLanguage, japaneseTone: JapaneseTone) async throws -> String {
+    private func translate(
+        _ text: String,
+        to targetLanguage: OutputLanguage,
+        japaneseTone: JapaneseTone,
+        partialResult: AIBackendClient.PartialResultHandler? = nil
+    ) async throws -> String {
         try validateBackendAvailability()
 
         return try await AIBackendClient.translate(
             text,
             targetLanguage: targetLanguage.promptName,
-            toneInstruction: targetLanguage == .japanese ? japaneseTone.promptInstruction : nil
+            toneInstruction: targetLanguage == .japanese ? japaneseTone.promptInstruction : nil,
+            partialResult: partialResult
         )
     }
 

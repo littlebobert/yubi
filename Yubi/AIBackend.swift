@@ -194,8 +194,14 @@ enum AIBackendClient {
     private static let openAIModel = "gpt-5.6-sol"
     private static let claudeModel = "claude-fable-5-thinking-high"
     typealias StatusHandler = @Sendable (String) -> Void
+    typealias PartialResultHandler = @Sendable (String) async -> Void
 
-    static func analyzeScreenshotText(_ text: String, targetLanguage: String, status: StatusHandler? = nil) async throws -> String {
+    static func analyzeScreenshotText(
+        _ text: String,
+        targetLanguage: String,
+        status: StatusHandler? = nil,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         let instructions = """
         You analyze OCR text extracted from an iPhone screenshot. Correct obvious OCR noise, summarize what is on screen, and translate the meaningful text into natural \(targetLanguage). Return only the requested sections.
         """
@@ -208,10 +214,20 @@ enum AIBackendClient {
         Translation (Markdown, \(targetLanguage)): fluent translated text in Markdown. Preserve names, numbers, URLs, UI labels, and useful structure. Use Markdown lists, emphasis, or tables only when they make the translation clearer.
         """
 
-        return try await respond(instructions: instructions, prompt: prompt, status: status)
+        return try await respond(
+            instructions: instructions,
+            prompt: prompt,
+            status: status,
+            partialResult: partialResult
+        )
     }
 
-    static func analyzeScreenshotImage(_ cgImage: CGImage, targetLanguage: String, status: StatusHandler? = nil) async throws -> String {
+    static func analyzeScreenshotImage(
+        _ cgImage: CGImage,
+        targetLanguage: String,
+        status: StatusHandler? = nil,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         let instructions = """
         You analyze iPhone screenshots from image input. Read visible text directly from the image. Infer the source language from the image. Summarize what is on screen and translate the meaningful visible text into natural \(targetLanguage). Return only the requested sections.
         """
@@ -231,16 +247,34 @@ enum AIBackendClient {
             status?("Preparing image for OpenAI...")
             let image = try uploadImage(from: cgImage)
             status?("OpenAI is analyzing the image...")
-            return try await openAIResponse(instructions: instructions, prompt: prompt, image: image, status: status)
+            return try await openAIResponse(
+                instructions: instructions,
+                prompt: prompt,
+                image: image,
+                status: status,
+                partialResult: partialResult
+            )
         case .claudeFable:
             status?("Preparing image for Claude Fable 5...")
             let image = try uploadImage(from: cgImage)
             status?("Claude Fable 5 is analyzing the image...")
-            return try await claudeResponse(instructions: instructions, prompt: prompt, image: image, status: status)
+            return try await claudeResponse(
+                instructions: instructions,
+                prompt: prompt,
+                image: image,
+                status: status,
+                partialResult: partialResult
+            )
         }
     }
 
-    static func translate(_ text: String, targetLanguage: String, toneInstruction: String?, status: StatusHandler? = nil) async throws -> String {
+    static func translate(
+        _ text: String,
+        targetLanguage: String,
+        toneInstruction: String?,
+        status: StatusHandler? = nil,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         let toneSentence = toneInstruction.map { " Use \($0)." } ?? ""
         let instructions = """
         Detect the source language and translate user-selected text into natural \(targetLanguage).\(toneSentence) Return only the translation, with no explanation, labels, or quotation marks.
@@ -251,20 +285,42 @@ enum AIBackendClient {
         \(text)
         """
 
-        return try await respond(instructions: instructions, prompt: prompt, status: status)
+        return try await respond(
+            instructions: instructions,
+            prompt: prompt,
+            status: status,
+            partialResult: partialResult
+        )
     }
 
-    private static func respond(instructions: String, prompt: String, status: StatusHandler? = nil) async throws -> String {
+    private static func respond(
+        instructions: String,
+        prompt: String,
+        status: StatusHandler? = nil,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         switch AIBackendSettings.selectedBackend {
         case .apple:
             status?("Apple is analyzing the text...")
             return try await appleTextResponse(instructions: instructions, prompt: prompt)
         case .openAI:
             status?("OpenAI is analyzing the text...")
-            return try await openAIResponse(instructions: instructions, prompt: prompt, image: nil, status: status)
+            return try await openAIResponse(
+                instructions: instructions,
+                prompt: prompt,
+                image: nil,
+                status: status,
+                partialResult: partialResult
+            )
         case .claudeFable:
             status?("Claude Fable 5 is analyzing the text...")
-            return try await claudeResponse(instructions: instructions, prompt: prompt, image: nil, status: status)
+            return try await claudeResponse(
+                instructions: instructions,
+                prompt: prompt,
+                image: nil,
+                status: status,
+                partialResult: partialResult
+            )
         }
     }
 
@@ -315,7 +371,13 @@ enum AIBackendClient {
         throw AIBackendError.modelUnavailable
     }
 
-    private static func openAIResponse(instructions: String, prompt: String, image: UploadImage?, status: StatusHandler?) async throws -> String {
+    private static func openAIResponse(
+        instructions: String,
+        prompt: String,
+        image: UploadImage?,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         let apiKey = AIBackendSettings.openAIAPIKey
         guard !apiKey.isEmpty else {
             throw AIBackendError.missingAPIKey("OpenAI")
@@ -339,6 +401,7 @@ enum AIBackendClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": openAIModel,
+            "stream": partialResult != nil,
             "instructions": instructions,
             "reasoning": [
                 "effort": "high"
@@ -351,11 +414,31 @@ enum AIBackendClient {
             ]
         ])
 
-        let data = try await responseData(for: request, provider: "OpenAI", status: status)
-        return try nonEmptyCleanedOutput(extractOpenAIText(from: data))
+        guard let partialResult else {
+            let data = try await responseData(for: request, provider: "OpenAI", status: status)
+            return try nonEmptyCleanedOutput(extractOpenAIText(from: data))
+        }
+
+        return try await streamedResponse(
+            for: request,
+            provider: "OpenAI",
+            status: status,
+            partialResult: partialResult
+        ) { event in
+            guard event["type"] as? String == "response.output_text.delta" else {
+                return nil
+            }
+            return event["delta"] as? String
+        }
     }
 
-    private static func claudeResponse(instructions: String, prompt: String, image: UploadImage?, status: StatusHandler?) async throws -> String {
+    private static func claudeResponse(
+        instructions: String,
+        prompt: String,
+        image: UploadImage?,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler? = nil
+    ) async throws -> String {
         let apiKey = AIBackendSettings.claudeAPIKey
         guard !apiKey.isEmpty else {
             throw AIBackendError.missingAPIKey("Claude")
@@ -384,6 +467,7 @@ enum AIBackendClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": claudeModel,
             "max_tokens": 4096,
+            "stream": partialResult != nil,
             "system": instructions,
             "messages": [
                 [
@@ -393,8 +477,75 @@ enum AIBackendClient {
             ]
         ])
 
-        let data = try await responseData(for: request, provider: "Claude Fable 5", status: status)
-        return try nonEmptyCleanedOutput(extractClaudeText(from: data))
+        guard let partialResult else {
+            let data = try await responseData(for: request, provider: "Claude Fable 5", status: status)
+            return try nonEmptyCleanedOutput(extractClaudeText(from: data))
+        }
+
+        return try await streamedResponse(
+            for: request,
+            provider: "Claude Fable 5",
+            status: status,
+            partialResult: partialResult
+        ) { event in
+            guard event["type"] as? String == "content_block_delta",
+                  let delta = event["delta"] as? [String: Any],
+                  delta["type"] as? String == "text_delta"
+            else {
+                return nil
+            }
+            return delta["text"] as? String
+        }
+    }
+
+    private static func streamedResponse(
+        for request: URLRequest,
+        provider: String,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler,
+        extractDelta: ([String: Any]) -> String?
+    ) async throws -> String {
+        status?("Waiting for \(provider)...")
+        aiBackendLogger.info("Starting streaming \(provider, privacy: .public) request")
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIBackendError.invalidResponse
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+            }
+            throw AIBackendError.requestFailed(
+                errorMessage(from: errorData) ?? "HTTP \(httpResponse.statusCode)"
+            )
+        }
+
+        var accumulatedOutput = ""
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data:") else {
+                continue
+            }
+
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard !payload.isEmpty, payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let delta = extractDelta(event),
+                  !delta.isEmpty
+            else {
+                continue
+            }
+
+            accumulatedOutput += delta
+            await partialResult(accumulatedOutput)
+        }
+
+        aiBackendLogger.info("Streaming \(provider, privacy: .public) request completed; characters=\(accumulatedOutput.count, privacy: .public)")
+        return try nonEmptyCleanedOutput(accumulatedOutput)
     }
 
     private static func responseData(for request: URLRequest, provider: String, status: StatusHandler?) async throws -> Data {

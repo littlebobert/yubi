@@ -946,9 +946,22 @@ struct ContentView: View {
             }
 
             do {
-                let resumedAnalysis = try await resumedScreenshotAnalysis(for: analysis) { message in
-                    ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysis.id)
-                }
+                let resumedAnalysis = try await resumedScreenshotAnalysis(
+                    for: analysis,
+                    status: { message in
+                        ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysis.id)
+                    },
+                    partialResult: { partialResult in
+                        ScreenshotAnalysisStore.save(ScreenshotAnalysis(
+                            id: analysis.id,
+                            date: analysis.date,
+                            detectedText: analysis.detectedText,
+                            result: partialResult,
+                            imageFilename: analysis.imageFilename,
+                            isComplete: false
+                        ))
+                    }
+                )
                 ScreenshotAnalysisStore.save(ScreenshotAnalysis(
                     id: analysis.id,
                     date: analysis.date,
@@ -983,19 +996,28 @@ struct ContentView: View {
 
     private func resumedScreenshotAnalysis(
         for analysis: ScreenshotAnalysis,
-        status: AIBackendClient.StatusHandler? = nil
+        status: AIBackendClient.StatusHandler? = nil,
+        partialResult: AIBackendClient.PartialResultHandler? = nil
     ) async throws -> (detectedText: String, result: String) {
         if let imageData = ScreenshotAnalysisStore.imageData(for: analysis),
            AIBackendSettings.selectedBackend != .apple || analysis.detectedText.isEmpty,
            let cgImage = UIImage(data: imageData)?.cgImage {
-            let imageAnalysis = try await ScreenshotTextAnalyzer.analyzeImage(cgImage, status: status)
+            let imageAnalysis = try await ScreenshotTextAnalyzer.analyzeImage(
+                cgImage,
+                status: status,
+                partialResult: partialResult
+            )
             return (
                 detectedText: imageAnalysis.transcript.isEmpty ? analysis.detectedText : imageAnalysis.transcript,
                 result: imageAnalysis.result
             )
         }
 
-        let result = try await ScreenshotTextAnalyzer.analyze(analysis.detectedText, status: status)
+        let result = try await ScreenshotTextAnalyzer.analyze(
+            analysis.detectedText,
+            status: status,
+            partialResult: partialResult
+        )
         return (detectedText: analysis.detectedText, result: result)
     }
 
