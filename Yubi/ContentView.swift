@@ -82,6 +82,8 @@ struct ContentView: View {
     @State private var isAnalyzingShortcutText = false
     @State private var resumingAnalysisIDs: Set<UUID> = []
     @State private var autoNavigatedAnalysisIDs: Set<UUID> = []
+    @State private var isResolvingLaunchDestination = true
+    @State private var destinationResolutionTask: Task<Void, Never>?
     @FocusState private var focusedAPIKeyField: APIKeyField?
 
     private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -105,17 +107,16 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if hasCompletedOnboarding || analysisStatus.phase == .running {
+            if isResolvingLaunchDestination {
+                launchCover
+            } else if hasCompletedOnboarding || analysisStatus.phase == .running {
                 mainTabs
             } else {
                 onboarding
             }
         }
         .onAppear {
-            // Sync AppStorage / persisted nav after the first frame already targeted the
-            // running analysis when one exists.
-            restoreNavigationState()
-            refreshAnalysisState()
+            beginDestinationResolution()
         }
         .onChange(of: selectedTab) { _, newTab in
             selectedTabValue = newTab.rawValue
@@ -145,13 +146,11 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
-                refreshAnalysisState()
-                // Keep the Yubi cover up until this destination has committed,
-                // so resume does not flash the pre-background tab.
-                Task { @MainActor in
-                    ResumeCoverController.shared.hide()
-                }
+                beginDestinationResolution()
             case .inactive, .background:
+                destinationResolutionTask?.cancel()
+                destinationResolutionTask = nil
+                isResolvingLaunchDestination = true
                 ResumeCoverController.shared.show()
             @unknown default:
                 break
@@ -161,6 +160,67 @@ struct ContentView: View {
             refreshAnalysisState()
         }
         .onOpenURL(perform: handleIncomingURL)
+    }
+
+    private var launchCover: some View {
+        ZStack {
+            Color(uiColor: .systemBackground)
+                .ignoresSafeArea()
+
+            Text("Yubi")
+                .font(.system(size: 34, weight: .bold))
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private func beginDestinationResolution() {
+        destinationResolutionTask?.cancel()
+        isResolvingLaunchDestination = true
+
+        destinationResolutionTask = Task { @MainActor in
+            restoreNavigationState()
+            let deadline = ContinuousClock.now + .seconds(1)
+
+            while !Task.isCancelled {
+                refreshAnalysisState()
+
+                if analysisStatus.phase == .running,
+                   let analysisID = analysisStatus.analysisID,
+                   historyPath == [analysisID] {
+                    await Task.yield()
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                    finishDestinationResolution()
+                    return
+                }
+
+                guard ContinuousClock.now < deadline else {
+                    break
+                }
+
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+            finishDestinationResolution()
+        }
+    }
+
+    private func finishDestinationResolution() {
+        destinationResolutionTask = nil
+        isResolvingLaunchDestination = false
+
+        Task { @MainActor in
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(100))
+            guard scenePhase == .active, !isResolvingLaunchDestination else {
+                return
+            }
+            ResumeCoverController.shared.hide()
+        }
     }
 
     private var mainTabs: some View {
@@ -2164,39 +2224,58 @@ private struct AnalysisDetailView: View {
     @State private var analysisStatus = ScreenshotAnalysisStatusStore.load()
 
     private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let streamingBottomAnchor = "streaming-analysis-bottom"
 
     private var screenshotImage: UIImage? {
         analysis.flatMap(ScreenshotAnalysisStore.imageData(for:)).flatMap(UIImage.init(data:))
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let analysis {
-                    if !analysis.isComplete {
-                        if analysisStatus.phase == .running && analysisStatus.analysisID == analysis.id {
-                            analysisProgressView
-                        } else {
-                            analysisFailureView
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let analysis {
+                        if !analysis.isComplete {
+                            if analysisStatus.phase == .running && analysisStatus.analysisID == analysis.id {
+                                analysisProgressView
+                            } else {
+                                analysisFailureView
+                            }
                         }
+
+                        screenshotSection
+
+                        if !analysis.result.isEmpty {
+                            detailSection(title: AppCopy.summaryLabel, text: analysis.summary)
+                            markdownDetailSection(title: AppCopy.translationLabel, text: analysis.translation)
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            AppCopy.noHistoryTitle,
+                            systemImage: "doc.text.magnifyingglass",
+                            description: Text(AppCopy.noHistoryBody)
+                        )
                     }
 
-                    screenshotSection
+                    Color.clear
+                        .frame(height: 1)
+                        .id(streamingBottomAnchor)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: analysis?.result ?? "") { previousResult, currentResult in
+                guard currentResult.count > previousResult.count,
+                      analysisStatus.phase == .running,
+                      analysisStatus.analysisID == analysisID
+                else {
+                    return
+                }
 
-                    if !analysis.result.isEmpty {
-                        detailSection(title: AppCopy.summaryLabel, text: analysis.summary)
-                        markdownDetailSection(title: AppCopy.translationLabel, text: analysis.translation)
-                    }
-                } else {
-                    ContentUnavailableView(
-                        AppCopy.noHistoryTitle,
-                        systemImage: "doc.text.magnifyingglass",
-                        description: Text(AppCopy.noHistoryBody)
-                    )
+                withAnimation(.easeOut(duration: 0.2)) {
+                    scrollProxy.scrollTo(streamingBottomAnchor, anchor: .bottom)
                 }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(analysis?.date.formatted(date: .abbreviated, time: .shortened) ?? AppCopy.historyTitle)
         .navigationBarTitleDisplayMode(.inline)
