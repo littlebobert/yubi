@@ -1488,11 +1488,11 @@ private enum AppCopy {
 
     static var openAIModelNote: String {
         localized(
-            en: "Uses GPT-5.6 Sol with high reasoning.",
-            ja: "GPT-5.6 Solを高推論設定で使用します。",
-            zhHans: "使用 GPT-5.6 Sol，并启用高推理设置。",
-            zhHant: "使用 GPT-5.6 Sol，並啟用高推理設定。",
-            ko: "GPT-5.6 Sol을 높은 추론 설정으로 사용합니다."
+            en: "Uses GPT-5.6 Sol with medium reasoning and Fast mode.",
+            ja: "GPT-5.6 Solを中程度の推論設定とFastモードで使用します。",
+            zhHans: "使用 GPT-5.6 Sol，并启用中等推理设置和快速模式。",
+            zhHant: "使用 GPT-5.6 Sol，並啟用中等推理設定和快速模式。",
+            ko: "GPT-5.6 Sol을 중간 추론 설정과 빠른 모드로 사용합니다."
         )
     }
 

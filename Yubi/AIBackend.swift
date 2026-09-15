@@ -401,10 +401,11 @@ enum AIBackendClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": openAIModel,
+            "service_tier": "fast",
             "stream": partialResult != nil,
             "instructions": instructions,
             "reasoning": [
-                "effort": "high"
+                "effort": "medium"
             ],
             "input": [
                 [
