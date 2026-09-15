@@ -40,6 +40,7 @@ final class KeyboardViewController: UIInputViewController {
         case korean
         case chineseSimplified
         case english
+        case tagalog
         case spanish
         case french
         case german
@@ -56,6 +57,8 @@ final class KeyboardViewController: UIInputViewController {
                 return KeyboardCopy.chinese
             case .english:
                 return KeyboardCopy.english
+            case .tagalog:
+                return KeyboardCopy.tagalog
             case .spanish:
                 return KeyboardCopy.spanish
             case .french:
@@ -75,6 +78,8 @@ final class KeyboardViewController: UIInputViewController {
                 return "Simplified Chinese"
             case .english:
                 return "English"
+            case .tagalog:
+                return "Tagalog"
             case .spanish:
                 return "Spanish"
             case .french:
@@ -259,6 +264,10 @@ final class KeyboardViewController: UIInputViewController {
 
         static var english: String {
             localized(en: "English", ja: "英語", zhHans: "英语", zhHant: "英文", ko: "영어")
+        }
+
+        static var tagalog: String {
+            localized(en: "Tagalog", ja: "タガログ語", zhHans: "他加禄语", zhHant: "他加祿文", ko: "타갈로그어")
         }
 
         static var spanish: String {
