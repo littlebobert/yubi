@@ -2156,7 +2156,7 @@ private struct AnalysisHistoryCard: View {
 
                 Text(cardText)
                     .font(.body)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: thumbnailSize, alignment: .topLeading)
