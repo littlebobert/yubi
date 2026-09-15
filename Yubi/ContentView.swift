@@ -2142,22 +2142,49 @@ private struct TextEditDayGroup: Identifiable {
 private struct AnalysisHistoryCard: View {
     let analysis: ScreenshotAnalysis
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if !analysis.isComplete {
-                ProgressView()
-                    .padding(.top, 2)
-            }
+    private let thumbnailSize: CGFloat = 64
 
-            Text(cardText)
-                .font(.body)
-                .lineLimit(2)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: 48, alignment: .topLeading)
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            thumbnail
+
+            HStack(alignment: .top, spacing: 10) {
+                if !analysis.isComplete {
+                    ProgressView()
+                        .padding(.top, 2)
+                }
+
+                Text(cardText)
+                    .font(.body)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: thumbnailSize, alignment: .topLeading)
+            }
         }
         .padding(14)
         .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let screenshotImage {
+            Image(uiImage: screenshotImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: thumbnailSize, height: thumbnailSize)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        } else {
+            Image(systemName: "photo")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .frame(width: thumbnailSize, height: thumbnailSize)
+                .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private var screenshotImage: UIImage? {
+        ScreenshotAnalysisStore.imageData(for: analysis).flatMap(UIImage.init(data:))
     }
 
     private var cardText: String {
