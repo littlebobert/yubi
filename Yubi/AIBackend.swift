@@ -17,6 +17,7 @@ private let aiBackendLogger = Logger(
 
 enum AIBackend: String, CaseIterable, Identifiable {
     case apple
+    case applePCC
     case openAI
     case claudeFable
 
@@ -28,6 +29,8 @@ enum AIBackend: String, CaseIterable, Identifiable {
         switch self {
         case .apple:
             return "Apple"
+        case .applePCC:
+            return "Apple Private Cloud Compute"
         case .openAI:
             return "OpenAI"
         case .claudeFable:
@@ -39,6 +42,8 @@ enum AIBackend: String, CaseIterable, Identifiable {
         switch self {
         case .apple:
             return "weaker, but private and free"
+        case .applePCC:
+            return "private and free, with a daily limit"
         case .openAI:
             return "balanced"
         case .claudeFable:
@@ -47,7 +52,20 @@ enum AIBackend: String, CaseIterable, Identifiable {
     }
 
     var isAvailable: Bool {
-        self != .apple
+        switch self {
+        case .apple:
+            return false
+        case .applePCC:
+            return AIBackendClient.isPrivateCloudComputeSupported
+        case .openAI, .claudeFable:
+            return true
+        }
+    }
+
+    /// Apple backends take screenshots through Vision OCR and then the text prompt,
+    /// instead of uploading the image.
+    var analyzesScreenshotsAsText: Bool {
+        self == .apple || self == .applePCC
     }
 }
 
@@ -243,6 +261,9 @@ enum AIBackendClient {
         case .apple:
             status?("Apple is analyzing the image...")
             return try await appleImageResponse(instructions: instructions, prompt: prompt, cgImage: cgImage)
+        case .applePCC:
+            // Screenshots reach PCC through Vision OCR + the text prompt instead.
+            throw AIBackendError.modelUnavailable
         case .openAI:
             status?("Preparing image for OpenAI...")
             let image = try uploadImage(from: cgImage)
@@ -303,6 +324,13 @@ enum AIBackendClient {
         case .apple:
             status?("Apple is analyzing the text...")
             return try await appleTextResponse(instructions: instructions, prompt: prompt)
+        case .applePCC:
+            status?("Apple Private Cloud Compute is analyzing the text...")
+            return try await privateCloudComputeTextResponse(
+                instructions: instructions,
+                prompt: prompt,
+                partialResult: partialResult
+            )
         case .openAI:
             status?("OpenAI is analyzing the text...")
             return try await openAIResponse(
@@ -339,6 +367,66 @@ enum AIBackendClient {
         #endif
 
         throw AIBackendError.modelUnavailable
+    }
+
+    // PrivateCloudComputeLanguageModel ships in the iOS 27 SDK (Swift 6.4). Older stable
+    // toolchains compile this out and the backend shows as unavailable.
+    static var isPrivateCloudComputeSupported: Bool {
+        #if canImport(FoundationModels) && compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    private static func privateCloudComputeTextResponse(
+        instructions: String,
+        prompt: String,
+        partialResult: PartialResultHandler?
+    ) async throws -> String {
+        #if canImport(FoundationModels) && compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            let model = PrivateCloudComputeLanguageModel()
+            switch model.availability {
+            case .available:
+                break
+            case .unavailable(let reason):
+                aiBackendLogger.error("Private Cloud Compute unavailable; reason=\(String(describing: reason), privacy: .public)")
+                throw AIBackendError.privateCloudComputeUnavailable
+            }
+
+            let session = LanguageModelSession(model: model, instructions: instructions)
+            do {
+                guard let partialResult else {
+                    let response = try await session.respond(to: prompt)
+                    return try nonEmptyCleanedOutput(response.content)
+                }
+
+                var latestOutput = ""
+                for try await snapshot in session.streamResponse(to: prompt) {
+                    try Task.checkCancellation()
+                    latestOutput = snapshot.content
+                    await partialResult(latestOutput)
+                }
+                return try nonEmptyCleanedOutput(latestOutput)
+            } catch let error as PrivateCloudComputeLanguageModel.Error {
+                aiBackendLogger.error("Private Cloud Compute request failed; error=\(String(describing: error), privacy: .public)")
+                switch error {
+                case .quotaLimitReached:
+                    throw AIBackendError.dailyLimitReached
+                case .networkFailure, .serviceUnavailable:
+                    throw AIBackendError.privateCloudComputeUnavailable
+                @unknown default:
+                    throw AIBackendError.requestFailed(String(describing: error))
+                }
+            }
+        }
+        #else
+        _ = (instructions, prompt, partialResult)
+        #endif
+
+        throw AIBackendError.privateCloudComputeUnavailable
     }
 
     private static func appleImageResponse(instructions: String, prompt: String, cgImage: CGImage) async throws -> String {
@@ -699,6 +787,8 @@ enum AIBackendError: Error, LocalizedError {
     case invalidResponse
     case missingAPIKey(String)
     case modelUnavailable
+    case privateCloudComputeUnavailable
+    case dailyLimitReached
     case requestFailed(String)
 
     var errorDescription: String? {
@@ -713,6 +803,10 @@ enum AIBackendError: Error, LocalizedError {
             return "\(provider) API key is missing."
         case .modelUnavailable:
             return "The Apple model is unavailable."
+        case .privateCloudComputeUnavailable:
+            return "Apple Private Cloud Compute is unavailable. It needs iOS 27, an Apple Intelligence device, and a network connection."
+        case .dailyLimitReached:
+            return "You've reached today's Apple Private Cloud Compute limit. Try again tomorrow or choose another backend."
         case .requestFailed(let message):
             return message
         }

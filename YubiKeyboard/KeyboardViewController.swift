@@ -237,6 +237,8 @@ final class KeyboardViewController: UIInputViewController {
                     zhHant: "翻譯會在可用時使用 Apple 保護隱私的裝置端模型。",
                     ko: "번역에는 가능한 경우 Apple의 개인정보 보호 온디바이스 모델을 사용합니다."
                 )
+            case .applePCC:
+                return KeyboardCopy.useAppForPrivateCloudCompute
             case .openAI:
                 return "Translation sends selected text to OpenAI."
             case .claudeFable:
@@ -323,6 +325,20 @@ final class KeyboardViewController: UIInputViewController {
 
         static var addAPIKey: String {
             localized(en: "Add API key in Yubi", ja: "YubiでAPIキーを追加", zhHans: "在 Yubi 中添加 API 密钥", zhHant: "在 Yubi 中加入 API 金鑰", ko: "Yubi에서 API 키 추가")
+        }
+
+        static var useAppForPrivateCloudCompute: String {
+            localized(
+                en: "Apple Private Cloud Compute works in the Yubi app. Choose another backend for the keyboard.",
+                ja: "Apple Private Cloud ComputeはYubiアプリで使えます。キーボードでは別のバックエンドを選んでください。",
+                zhHans: "Apple 私有云计算可在 Yubi App 中使用。请为键盘选择其他后端。",
+                zhHant: "Apple 私有雲端運算可在 Yubi App 中使用。請為鍵盤選擇其他後端。",
+                ko: "Apple 프라이빗 클라우드 컴퓨트는 Yubi 앱에서 사용할 수 있습니다. 키보드에서는 다른 백엔드를 선택하세요."
+            )
+        }
+
+        static var chooseAnotherBackend: String {
+            localized(en: "Choose another backend in Yubi", ja: "Yubiで別のバックエンドを選択", zhHans: "在 Yubi 中选择其他后端", zhHant: "在 Yubi 中選擇其他後端", ko: "Yubi에서 다른 백엔드 선택")
         }
 
         static var translationFailed: String {
@@ -1425,6 +1441,9 @@ final class KeyboardViewController: UIInputViewController {
         switch AIBackendSettings.selectedBackend {
         case .apple:
             return
+        case .applePCC:
+            // PCC is entitled on the app's App ID only, not the keyboard extension's.
+            throw KeyboardTranslationError.backendUnsupportedInKeyboard
         case .openAI:
             guard hasFullAccess else {
                 throw KeyboardTranslationError.fullAccessRequired
@@ -1451,6 +1470,8 @@ final class KeyboardViewController: UIInputViewController {
                 return KeyboardCopy.allowFullAccess
             case .missingAPIKey:
                 return KeyboardCopy.addAPIKey
+            case .backendUnsupportedInKeyboard:
+                return KeyboardCopy.chooseAnotherBackend
             }
         }
 
@@ -1938,6 +1959,7 @@ private enum SuggestionBarState {
 private enum KeyboardTranslationError: Error {
     case fullAccessRequired
     case missingAPIKey
+    case backendUnsupportedInKeyboard
 }
 
 private final class TopRowHitProxyView: UIView {
