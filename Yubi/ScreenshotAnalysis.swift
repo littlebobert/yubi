@@ -42,6 +42,10 @@ struct ScreenshotAnalysis: Codable, Equatable, Identifiable {
         section(named: "Translation") ?? result
     }
 
+    var hasStandardSections: Bool {
+        section(named: "Summary") != nil || section(named: "Translation") != nil
+    }
+
     var transcript: String {
         detectedText.isEmpty ? (section(named: "Transcript") ?? "") : detectedText
     }

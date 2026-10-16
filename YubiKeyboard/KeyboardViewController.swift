@@ -229,14 +229,6 @@ final class KeyboardViewController: UIInputViewController {
 
         static func privacyHint(for backend: AIBackend) -> String {
             switch backend {
-            case .apple:
-                return localized(
-                    en: "Translation uses Apple's privacy-preserving on-device model when available.",
-                    ja: "翻訳には、利用可能な場合Appleのプライバシー保護型オンデバイスモデルを使用します。",
-                    zhHans: "翻译会在可用时使用 Apple 保护隐私的设备端模型。",
-                    zhHant: "翻譯會在可用時使用 Apple 保護隱私的裝置端模型。",
-                    ko: "번역에는 가능한 경우 Apple의 개인정보 보호 온디바이스 모델을 사용합니다."
-                )
             case .applePCC:
                 return KeyboardCopy.useAppForPrivateCloudCompute
             case .openAI:
@@ -1439,8 +1431,6 @@ final class KeyboardViewController: UIInputViewController {
 
     private func validateBackendAvailability() throws {
         switch AIBackendSettings.selectedBackend {
-        case .apple:
-            return
         case .applePCC:
             // PCC is entitled on the app's App ID only, not the keyboard extension's.
             throw KeyboardTranslationError.backendUnsupportedInKeyboard

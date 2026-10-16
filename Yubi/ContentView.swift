@@ -1060,7 +1060,6 @@ struct ContentView: View {
         partialResult: AIBackendClient.PartialResultHandler? = nil
     ) async throws -> (detectedText: String, result: String) {
         if let imageData = ScreenshotAnalysisStore.imageData(for: analysis),
-           !AIBackendSettings.selectedBackend.analyzesScreenshotsAsText || analysis.detectedText.isEmpty,
            let cgImage = UIImage(data: imageData)?.cgImage {
             let imageAnalysis = try await ScreenshotTextAnalyzer.analyzeImage(
                 cgImage,
@@ -1412,14 +1411,6 @@ private enum AppCopy {
 
     static func aiBackendOptionTitle(_ backend: AIBackend) -> String {
         switch backend {
-        case .apple:
-            return localized(
-                en: "Apple (Coming Soon)",
-                ja: "Apple（近日対応予定）",
-                zhHans: "Apple（即将推出）",
-                zhHant: "Apple（即將推出）",
-                ko: "Apple(출시 예정)"
-            )
         case .applePCC:
             return localized(
                 en: "Apple Private Cloud Compute",
@@ -1437,14 +1428,6 @@ private enum AppCopy {
 
     static func aiBackendOptionDetail(_ backend: AIBackend) -> String {
         switch backend {
-        case .apple:
-            return localized(
-                en: "weaker, but private and free",
-                ja: "弱めですが、プライベートで無料",
-                zhHans: "较弱，但私密且免费",
-                zhHant: "較弱，但私密且免費",
-                ko: "약하지만 비공개이며 무료"
-            )
         case .applePCC:
             if !backend.isAvailable {
                 return localized(
@@ -2056,11 +2039,11 @@ private enum AppCopy {
 
     static var privacyBody: String {
         localized(
-            en: "Apple runs privately on device when available. Apple Private Cloud Compute runs on Apple's private servers with a daily limit. OpenAI and Claude send requests to the selected provider using your API key. Full Access lets the keyboard use that backend and save Text Edits history in Yubi.",
-            ja: "Appleは利用可能な場合、デバイス上でプライベートに実行されます。Apple Private Cloud ComputeはAppleのプライベートサーバー上で実行され、1日の上限があります。OpenAIとClaudeは、あなたのAPIキーを使って選択したプロバイダにリクエストを送信します。フルアクセスを許可すると、キーボードがそのバックエンドを使用し、テキスト編集履歴をYubiに保存できます。",
-            zhHans: "Apple 可用时会在设备端私密运行。Apple 私有云计算在 Apple 的私有服务器上运行，每日有用量上限。OpenAI 和 Claude 会使用你的 API 密钥向所选提供商发送请求。完全访问权限可让键盘使用该后端并将文本编辑历史保存到 Yubi。",
-            zhHant: "Apple 可用時會在裝置端私密執行。Apple 私有雲端運算在 Apple 的私有伺服器上執行，每日有用量上限。OpenAI 和 Claude 會使用你的 API 金鑰向所選提供商傳送要求。完整取用權限可讓鍵盤使用該後端並將文字編輯記錄儲存到 Yubi。",
-            ko: "Apple은 가능한 경우 기기에서 비공개로 실행됩니다. Apple 프라이빗 클라우드 컴퓨트는 Apple의 비공개 서버에서 실행되며 일일 사용 한도가 있습니다. OpenAI와 Claude는 사용자의 API 키로 선택한 제공업체에 요청을 보냅니다. 전체 접근 권한을 허용하면 키보드가 해당 백엔드를 사용하고 텍스트 편집 기록을 Yubi에 저장할 수 있습니다."
+            en: "Apple Private Cloud Compute runs on Apple's private servers with a daily limit. OpenAI and Claude send requests to the selected provider using your API key. Full Access lets the keyboard use that backend and save Text Edits history in Yubi.",
+            ja: "Apple Private Cloud ComputeはAppleのプライベートサーバー上で実行され、1日の上限があります。OpenAIとClaudeは、あなたのAPIキーを使って選択したプロバイダにリクエストを送信します。フルアクセスを許可すると、キーボードがそのバックエンドを使用し、テキスト編集履歴をYubiに保存できます。",
+            zhHans: "Apple 私有云计算在 Apple 的私有服务器上运行，每日有用量上限。OpenAI 和 Claude 会使用你的 API 密钥向所选提供商发送请求。完全访问权限可让键盘使用该后端并将文本编辑历史保存到 Yubi。",
+            zhHant: "Apple 私有雲端運算在 Apple 的私有伺服器上執行，每日有用量上限。OpenAI 和 Claude 會使用你的 API 金鑰向所選提供商傳送要求。完整取用權限可讓鍵盤使用該後端並將文字編輯記錄儲存到 Yubi。",
+            ko: "Apple 프라이빗 클라우드 컴퓨트는 Apple의 비공개 서버에서 실행되며 일일 사용 한도가 있습니다. OpenAI와 Claude는 사용자의 API 키로 선택한 제공업체에 요청을 보냅니다. 전체 접근 권한을 허용하면 키보드가 해당 백엔드를 사용하고 텍스트 편집 기록을 Yubi에 저장할 수 있습니다."
         )
     }
 
@@ -2298,8 +2281,16 @@ private struct AnalysisDetailView: View {
                         screenshotSection
 
                         if !analysis.result.isEmpty {
-                            detailSection(title: AppCopy.summaryLabel, text: analysis.summary)
-                            markdownDetailSection(title: AppCopy.translationLabel, text: analysis.translation)
+                            if analysis.hasStandardSections {
+                                detailSection(title: AppCopy.summaryLabel, text: analysis.summary)
+                                markdownDetailSection(title: AppCopy.translationLabel, text: analysis.translation)
+                            } else {
+                                // TEMP: food-label output from PCC is raw text without sections.
+                                Text(analysis.result)
+                                    .font(.body)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
                         }
                     } else {
                         ContentUnavailableView(

@@ -2,7 +2,7 @@
 
 Yubi is an iOS translation app for screenshots and selected text. It can analyze a screenshot from Shortcuts, summarize what is on screen, and translate the meaningful visible text. It also includes a lightweight keyboard extension for translating selected text in place.
 
-Yubi supports Apple Foundation Models, OpenAI, and Claude Fable 5 as AI backends. Apple runs privately on device when available; OpenAI and Claude use your own API key.
+Yubi supports Apple Private Cloud Compute (the default, iOS 27+), OpenAI, and Claude Fable 5 as AI backends. Apple Private Cloud Compute is private and free with a daily limit; OpenAI and Claude use your own API key.
 
 ## Build And Run
 

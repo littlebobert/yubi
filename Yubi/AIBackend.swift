@@ -16,7 +16,6 @@ private let aiBackendLogger = Logger(
 )
 
 enum AIBackend: String, CaseIterable, Identifiable {
-    case apple
     case applePCC
     case openAI
     case claudeFable
@@ -27,8 +26,6 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .apple:
-            return "Apple"
         case .applePCC:
             return "Apple Private Cloud Compute"
         case .openAI:
@@ -40,8 +37,6 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .apple:
-            return "weaker, but private and free"
         case .applePCC:
             return "private and free, with a daily limit"
         case .openAI:
@@ -53,19 +48,11 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
     var isAvailable: Bool {
         switch self {
-        case .apple:
-            return false
         case .applePCC:
             return AIBackendClient.isPrivateCloudComputeSupported
         case .openAI, .claudeFable:
             return true
         }
-    }
-
-    /// Apple backends take screenshots through Vision OCR and then the text prompt,
-    /// instead of uploading the image.
-    var analyzesScreenshotsAsText: Bool {
-        self == .apple || self == .applePCC
     }
 }
 
@@ -80,14 +67,18 @@ enum AIBackendSettings {
                   let backend = AIBackend(rawValue: rawValue),
                   backend.isAvailable
             else {
-                return .openAI
+                return defaultBackend
             }
 
             return backend
         }
         set {
-            userDefaults.set((newValue.isAvailable ? newValue : .openAI).rawValue, forKey: backendKey)
+            userDefaults.set((newValue.isAvailable ? newValue : defaultBackend).rawValue, forKey: backendKey)
         }
+    }
+
+    private static var defaultBackend: AIBackend {
+        AIBackend.applePCC.isAvailable ? .applePCC : .openAI
     }
 
     static var openAIAPIKey: String {
@@ -220,6 +211,11 @@ enum AIBackendClient {
         status: StatusHandler? = nil,
         partialResult: PartialResultHandler? = nil
     ) async throws -> String {
+        // TEMP: food-label experiment. PCC gets a nutrition prompt instead of summary + translation.
+        if AIBackendSettings.selectedBackend == .applePCC {
+            return try await analyzeFoodLabelText(text, targetLanguage: targetLanguage, status: status, partialResult: partialResult)
+        }
+
         let instructions = """
         You analyze OCR text extracted from an iPhone screenshot. Correct obvious OCR noise, summarize what is on screen, and translate the meaningful text into natural \(targetLanguage). Return only the requested sections.
         """
@@ -236,6 +232,65 @@ enum AIBackendClient {
             instructions: instructions,
             prompt: prompt,
             status: status,
+            partialResult: partialResult
+        )
+    }
+
+    // TEMP: food-label experiment for the PCC backend.
+    private static func foodLabelInstructions(targetLanguage: String) -> String {
+        """
+        You are a nutrition expert. You read photos or screenshots of food, food packaging, and nutrition labels. Use your general knowledge of foods, brands, ingredients, and nutrition to interpret what you see and fill gaps, and say when you are estimating. Reply in plain text only, with no Markdown, in \(targetLanguage).
+        """
+    }
+
+    private static let foodLabelRequestedLines = """
+    Identify the food, then return exactly these three lines:
+    Protein: grams per serving and per 100 g if available (mark estimates as estimated)
+    Sugar: grams per serving and per 100 g if available, including added sugar if listed (mark estimates as estimated)
+    Health grade: one letter from A, B, C, D, E, or F (A is healthiest, F is worst), followed by a short reason
+    """
+
+    private static func analyzeFoodLabelText(
+        _ text: String,
+        targetLanguage: String,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler?
+    ) async throws -> String {
+        let prompt = """
+        OCR text from a food label (may be noisy or incomplete):
+        \(text)
+
+        \(foodLabelRequestedLines)
+        """
+
+        status?("Apple Private Cloud Compute is analyzing the food label...")
+        return try await privateCloudComputeResponse(
+            instructions: foodLabelInstructions(targetLanguage: targetLanguage),
+            prompt: prompt,
+            image: nil,
+            reasoningLevel: .deep,
+            partialResult: partialResult
+        )
+    }
+
+    private static func analyzeFoodLabelImage(
+        _ cgImage: CGImage,
+        targetLanguage: String,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler?
+    ) async throws -> String {
+        let prompt = """
+        Analyze the food in this image.
+
+        \(foodLabelRequestedLines)
+        """
+
+        status?("Apple Private Cloud Compute is analyzing the image...")
+        return try await privateCloudComputeResponse(
+            instructions: foodLabelInstructions(targetLanguage: targetLanguage),
+            prompt: prompt,
+            image: cgImage,
+            reasoningLevel: .deep,
             partialResult: partialResult
         )
     }
@@ -258,12 +313,14 @@ enum AIBackendClient {
         """
 
         switch AIBackendSettings.selectedBackend {
-        case .apple:
-            status?("Apple is analyzing the image...")
-            return try await appleImageResponse(instructions: instructions, prompt: prompt, cgImage: cgImage)
         case .applePCC:
-            // Screenshots reach PCC through Vision OCR + the text prompt instead.
-            throw AIBackendError.modelUnavailable
+            // TEMP: food-label experiment.
+            return try await analyzeFoodLabelImage(
+                cgImage,
+                targetLanguage: targetLanguage,
+                status: status,
+                partialResult: partialResult
+            )
         case .openAI:
             status?("Preparing image for OpenAI...")
             let image = try uploadImage(from: cgImage)
@@ -321,14 +378,13 @@ enum AIBackendClient {
         partialResult: PartialResultHandler? = nil
     ) async throws -> String {
         switch AIBackendSettings.selectedBackend {
-        case .apple:
-            status?("Apple is analyzing the text...")
-            return try await appleTextResponse(instructions: instructions, prompt: prompt)
         case .applePCC:
             status?("Apple Private Cloud Compute is analyzing the text...")
-            return try await privateCloudComputeTextResponse(
+            return try await privateCloudComputeResponse(
                 instructions: instructions,
                 prompt: prompt,
+                image: nil,
+                reasoningLevel: nil,
                 partialResult: partialResult
             )
         case .openAI:
@@ -352,23 +408,6 @@ enum AIBackendClient {
         }
     }
 
-    private static func appleTextResponse(instructions: String, prompt: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            let model = SystemLanguageModel.default
-            guard model.isAvailable else {
-                throw AIBackendError.modelUnavailable
-            }
-
-            let session = LanguageModelSession(model: model, instructions: instructions)
-            let response = try await session.respond(to: prompt)
-            return try nonEmptyCleanedOutput(response.content)
-        }
-        #endif
-
-        throw AIBackendError.modelUnavailable
-    }
-
     // PrivateCloudComputeLanguageModel ships in the iOS 27 SDK (Swift 6.4). Older stable
     // toolchains compile this out and the backend shows as unavailable.
     static var isPrivateCloudComputeSupported: Bool {
@@ -380,9 +419,17 @@ enum AIBackendClient {
         return false
     }
 
-    private static func privateCloudComputeTextResponse(
+    enum PCCReasoningLevel {
+        case light
+        case moderate
+        case deep
+    }
+
+    private static func privateCloudComputeResponse(
         instructions: String,
         prompt: String,
+        image: CGImage?,
+        reasoningLevel: PCCReasoningLevel?,
         partialResult: PartialResultHandler?
     ) async throws -> String {
         #if canImport(FoundationModels) && compiler(>=6.4)
@@ -396,15 +443,38 @@ enum AIBackendClient {
                 throw AIBackendError.privateCloudComputeUnavailable
             }
 
+            if image != nil, !model.capabilities.contains(.vision) {
+                throw AIBackendError.imageInputUnsupported
+            }
+
+            let request = Prompt {
+                prompt
+                if let image {
+                    Attachment(image)
+                }
+            }
+
+            let contextOptions: ContextOptions
+            switch reasoningLevel {
+            case .light:
+                contextOptions = ContextOptions(reasoningLevel: .light)
+            case .moderate:
+                contextOptions = ContextOptions(reasoningLevel: .moderate)
+            case .deep:
+                contextOptions = ContextOptions(reasoningLevel: .deep)
+            case nil:
+                contextOptions = ContextOptions()
+            }
+
             let session = LanguageModelSession(model: model, instructions: instructions)
             do {
                 guard let partialResult else {
-                    let response = try await session.respond(to: prompt)
+                    let response = try await session.respond(to: request, contextOptions: contextOptions)
                     return try nonEmptyCleanedOutput(response.content)
                 }
 
                 var latestOutput = ""
-                for try await snapshot in session.streamResponse(to: prompt) {
+                for try await snapshot in session.streamResponse(to: request, contextOptions: contextOptions) {
                     try Task.checkCancellation()
                     latestOutput = snapshot.content
                     await partialResult(latestOutput)
@@ -423,40 +493,10 @@ enum AIBackendClient {
             }
         }
         #else
-        _ = (instructions, prompt, partialResult)
+        _ = (instructions, prompt, image, reasoningLevel, partialResult)
         #endif
 
         throw AIBackendError.privateCloudComputeUnavailable
-    }
-
-    private static func appleImageResponse(instructions: String, prompt: String, cgImage: CGImage) async throws -> String {
-        // Multimodal prompts need FoundationModels.Attachment (iOS 27 SDK). Stable release
-        // Xcode on CI (e.g. 26.3) can import FoundationModels for text, but Attachment is
-        // missing — and `#available(iOS 27, *)` does not hide symbols from the type checker.
-        //
-        // Keep the vision implementation behind a hard compile-time off switch until the
-        // App Store-accepting toolchain ships Attachment. Local beta Xcode can flip this to
-        // `true` for day-to-day experiments; TestFlight builds leave it false.
-        // Screenshot Apple-backend flow still works via Vision OCR + appleTextResponse.
-        #if false && canImport(FoundationModels)
-        if #available(iOS 27.0, *) {
-            let model = SystemLanguageModel.default
-            guard model.isAvailable else {
-                throw AIBackendError.modelUnavailable
-            }
-
-            let session = LanguageModelSession(model: model, instructions: instructions)
-            let response = try await session.respond {
-                prompt
-                Attachment(cgImage)
-            }
-            return try nonEmptyCleanedOutput(response.content)
-        }
-        #else
-        _ = (instructions, prompt, cgImage)
-        #endif
-
-        throw AIBackendError.modelUnavailable
     }
 
     private static func openAIResponse(
@@ -786,8 +826,8 @@ enum AIBackendError: Error, LocalizedError {
     case invalidImage
     case invalidResponse
     case missingAPIKey(String)
-    case modelUnavailable
     case privateCloudComputeUnavailable
+    case imageInputUnsupported
     case dailyLimitReached
     case requestFailed(String)
 
@@ -801,10 +841,10 @@ enum AIBackendError: Error, LocalizedError {
             return "The AI backend returned an unexpected response."
         case .missingAPIKey(let provider):
             return "\(provider) API key is missing."
-        case .modelUnavailable:
-            return "The Apple model is unavailable."
         case .privateCloudComputeUnavailable:
             return "Apple Private Cloud Compute is unavailable. It needs iOS 27, an Apple Intelligence device, and a network connection."
+        case .imageInputUnsupported:
+            return "The selected model can't read images."
         case .dailyLimitReached:
             return "You've reached today's Apple Private Cloud Compute limit. Try again tomorrow or choose another backend."
         case .requestFailed(let message):

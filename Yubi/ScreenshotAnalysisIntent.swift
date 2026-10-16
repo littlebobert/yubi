@@ -39,39 +39,15 @@ public struct AnalyzeImageIntent: AppIntent {
             imageFilename: imageFilename,
             isComplete: false
         ))
-        ScreenshotAnalysisStatusStore.markRunning("Reading screenshot", analysisID: analysisID)
-
-        do {
-            let backend = AIBackendSettings.selectedBackend
-            let message = "\(backend.displayName) is analyzing the image..."
-
-            if !backend.analyzesScreenshotsAsText {
-                ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
-                screenshotIntentLogger.info("Analyze Image intent saved pending image for selected backend")
-                return .result()
-            }
-
-            let detectedText = try recognizedText(from: image.data)
-            ScreenshotAnalysisStore.save(ScreenshotAnalysis(
-                id: analysisID,
-                date: Date(),
-                detectedText: detectedText,
-                result: "",
-                imageFilename: imageFilename,
-                isComplete: false
-            ))
-            ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
-
-            screenshotIntentLogger.info("Analyze Image intent saved pending result; detectedCharacters=\(detectedText.count, privacy: .public)")
-            return .result()
-        } catch {
-            ScreenshotAnalysisStatusStore.markFailed("Analysis failed", analysisID: analysisID)
-            screenshotIntentLogger.error("Analyze Image intent failed: \(String(describing: error), privacy: .public)")
-            throw error
-        }
+        let message = "\(AIBackendSettings.selectedBackend.displayName) is analyzing the image..."
+        ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
+        screenshotIntentLogger.info("Analyze Image intent saved pending image for selected backend")
+        return .result()
     }
+}
 
-    private func recognizedText(from imageData: Data) throws -> String {
+enum ScreenshotOCR {
+    static func recognizedText(from imageData: Data) throws -> String {
         guard let image = UIImage(data: imageData),
               let cgImage = image.cgImage
         else {
@@ -79,6 +55,10 @@ public struct AnalyzeImageIntent: AppIntent {
             throw ScreenshotAnalysisError.invalidImage
         }
 
+        return try recognizedText(from: cgImage)
+    }
+
+    static func recognizedText(from cgImage: CGImage) throws -> String {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
