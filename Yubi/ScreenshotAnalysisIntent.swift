@@ -45,7 +45,7 @@ public struct AnalyzeImageIntent: AppIntent {
             let backend = AIBackendSettings.selectedBackend
             let message = "\(backend.displayName) is analyzing the image..."
 
-            if backend != .apple {
+            if !backend.analyzesScreenshotsAsText {
                 ScreenshotAnalysisStatusStore.markRunning(message, analysisID: analysisID)
                 screenshotIntentLogger.info("Analyze Image intent saved pending image for selected backend")
                 return .result()
