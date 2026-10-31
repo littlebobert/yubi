@@ -70,5 +70,4 @@ App Store Connect → TestFlight → wait for processing → assign testers.
 
 - **Debug** still uses automatic signing for day-to-day device runs.
 - **Release** in the Xcode project is manual (`Yubi` / `Yubi Keyboard`) for CI. Local Release archive needs those profiles installed (double-click the `.mobileprovision` files) or temporarily switch Release back to Automatic in Xcode.
-- `FoundationModels` image `Attachment` is compile-gated off for stable CI Xcode; OpenAI/Claude image analysis is unchanged.
 - Keyboard `WordFrequencies.json` is generated in a build phase (runner needs network once for `wordfreq`).

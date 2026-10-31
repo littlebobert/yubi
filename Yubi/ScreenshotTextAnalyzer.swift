@@ -43,28 +43,16 @@ enum ScreenshotTextAnalyzer {
         let backend = AIBackendSettings.selectedBackend
         screenshotAnalyzerLogger.info("Starting text analysis; backend=\(backend.displayName, privacy: .public), targetLanguage=\(targetLanguage, privacy: .public)")
 
-        do {
-            let output = try await AIBackendClient.analyzeScreenshotText(
-                text,
-                targetLanguage: targetLanguage,
-                status: status,
-                partialResult: partialResult
-            )
-            screenshotAnalyzerLogger.info("Text analysis completed; outputCharacters=\(output.count, privacy: .public)")
-            return output
-        } catch {
-            guard backend == .apple else {
-                throw error
-            }
-
-            screenshotAnalyzerLogger.warning("Apple analysis unavailable; using fallback analysis")
-            return fallbackAnalysis(for: text)
-        }
+        let output = try await AIBackendClient.analyzeScreenshotText(
+            text,
+            targetLanguage: targetLanguage,
+            status: status,
+            partialResult: partialResult
+        )
+        screenshotAnalyzerLogger.info("Text analysis completed; outputCharacters=\(output.count, privacy: .public)")
+        return output
     }
 
-    private static func fallbackAnalysis(for text: String) -> String {
-        "Detected text:\n\(text)"
-    }
     private static func section(named name: String, in output: String) -> String? {
         let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard let startIndex = lines.firstIndex(where: { line in

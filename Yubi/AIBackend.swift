@@ -16,7 +16,6 @@ private let aiBackendLogger = Logger(
 )
 
 enum AIBackend: String, CaseIterable, Identifiable {
-    case apple
     case applePCC
     case openAI
     // Keeps its original raw value so existing saved selections still load.
@@ -28,8 +27,6 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .apple:
-            return "Apple"
         case .applePCC:
             return "Apple Private Cloud Compute"
         case .openAI:
@@ -41,21 +38,17 @@ enum AIBackend: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .apple:
-            return "weaker, but private and free"
         case .applePCC:
             return "private and free, with a daily limit"
         case .openAI:
-            return "balanced"
+            return "fast, lower cost"
         case .claudeOpus:
-            return "strongest, most expensive"
+            return "fast, higher cost"
         }
     }
 
     var isAvailable: Bool {
         switch self {
-        case .apple:
-            return false
         case .applePCC:
             return AIBackendClient.isPrivateCloudComputeSupported
         case .openAI, .claudeOpus:
@@ -66,12 +59,13 @@ enum AIBackend: String, CaseIterable, Identifiable {
     /// Apple backends take screenshots through Vision OCR and then the text prompt,
     /// instead of uploading the image.
     var analyzesScreenshotsAsText: Bool {
-        self == .apple || self == .applePCC
+        self == .applePCC
     }
 }
 
 enum AIBackendSettings {
     private static let backendKey = "YubiAIBackend"
+    private static let openAIUltrafastKey = "YubiOpenAIUltrafast"
     private static let legacyOpenAIAPIKeyKey = "YubiOpenAIAPIKey"
     private static let legacyClaudeAPIKeyKey = "YubiClaudeAPIKey"
 
@@ -99,6 +93,15 @@ enum AIBackendSettings {
         }
 
         return .applePCC
+    }
+
+    static var openAIUltrafastEnabled: Bool {
+        get {
+            userDefaults.bool(forKey: openAIUltrafastKey)
+        }
+        set {
+            userDefaults.set(newValue, forKey: openAIUltrafastKey)
+        }
     }
 
     static var openAIAPIKey: String {
@@ -220,7 +223,7 @@ private enum AIBackendCredentialStore {
 }
 
 enum AIBackendClient {
-    private static let openAIModel = "gpt-5.6-sol"
+    private static let openAIModel = "gpt-6.1-sol"
     private static let claudeModel = "claude-opus-5-5"
     private static let claudeRefusalMessage = "Claude declined to analyze this content."
     typealias StatusHandler = @Sendable (String) -> Void
@@ -270,9 +273,6 @@ enum AIBackendClient {
         """
 
         switch AIBackendSettings.selectedBackend {
-        case .apple:
-            status?("Apple is analyzing the image...")
-            return try await appleImageResponse(instructions: instructions, prompt: prompt, cgImage: cgImage)
         case .applePCC:
             // Screenshots reach PCC through Vision OCR + the text prompt instead.
             throw AIBackendError.modelUnavailable
@@ -333,9 +333,6 @@ enum AIBackendClient {
         partialResult: PartialResultHandler? = nil
     ) async throws -> String {
         switch AIBackendSettings.selectedBackend {
-        case .apple:
-            status?("Apple is analyzing the text...")
-            return try await appleTextResponse(instructions: instructions, prompt: prompt)
         case .applePCC:
             status?("Apple Private Cloud Compute is analyzing the text...")
             return try await privateCloudComputeTextResponse(
@@ -362,23 +359,6 @@ enum AIBackendClient {
                 partialResult: partialResult
             )
         }
-    }
-
-    private static func appleTextResponse(instructions: String, prompt: String) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            let model = SystemLanguageModel.default
-            guard model.isAvailable else {
-                throw AIBackendError.modelUnavailable
-            }
-
-            let session = LanguageModelSession(model: model, instructions: instructions)
-            let response = try await session.respond(to: prompt)
-            return try nonEmptyCleanedOutput(response.content)
-        }
-        #endif
-
-        throw AIBackendError.modelUnavailable
     }
 
     // PrivateCloudComputeLanguageModel ships in the iOS 27 SDK (Swift 6.4). Older stable
@@ -441,36 +421,6 @@ enum AIBackendClient {
         throw AIBackendError.privateCloudComputeUnavailable
     }
 
-    private static func appleImageResponse(instructions: String, prompt: String, cgImage: CGImage) async throws -> String {
-        // Multimodal prompts need FoundationModels.Attachment (iOS 27 SDK). Stable release
-        // Xcode on CI (e.g. 26.3) can import FoundationModels for text, but Attachment is
-        // missing — and `#available(iOS 27, *)` does not hide symbols from the type checker.
-        //
-        // Keep the vision implementation behind a hard compile-time off switch until the
-        // App Store-accepting toolchain ships Attachment. Local beta Xcode can flip this to
-        // `true` for day-to-day experiments; TestFlight builds leave it false.
-        // Screenshot Apple-backend flow still works via Vision OCR + appleTextResponse.
-        #if false && canImport(FoundationModels)
-        if #available(iOS 27.0, *) {
-            let model = SystemLanguageModel.default
-            guard model.isAvailable else {
-                throw AIBackendError.modelUnavailable
-            }
-
-            let session = LanguageModelSession(model: model, instructions: instructions)
-            let response = try await session.respond {
-                prompt
-                Attachment(cgImage)
-            }
-            return try nonEmptyCleanedOutput(response.content)
-        }
-        #else
-        _ = (instructions, prompt, cgImage)
-        #endif
-
-        throw AIBackendError.modelUnavailable
-    }
-
     private static func openAIResponse(
         instructions: String,
         prompt: String,
@@ -483,6 +433,28 @@ enum AIBackendClient {
             throw AIBackendError.missingAPIKey("OpenAI")
         }
 
+        guard AIBackendSettings.openAIUltrafastEnabled else {
+            return try await openAIResponse(apiKey: apiKey, instructions: instructions, prompt: prompt, image: image, serviceTier: "fast", status: status, partialResult: partialResult)
+        }
+
+        // Ultrafast has its own capacity, so fall back to Fast when it runs out.
+        do {
+            return try await openAIResponse(apiKey: apiKey, instructions: instructions, prompt: prompt, image: image, serviceTier: "ultrafast", status: status, partialResult: partialResult)
+        } catch AIBackendError.capacityUnavailable {
+            aiBackendLogger.info("OpenAI Ultrafast unavailable; retrying with Fast")
+            return try await openAIResponse(apiKey: apiKey, instructions: instructions, prompt: prompt, image: image, serviceTier: "fast", status: status, partialResult: partialResult)
+        }
+    }
+
+    private static func openAIResponse(
+        apiKey: String,
+        instructions: String,
+        prompt: String,
+        image: UploadImage?,
+        serviceTier: String,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler?
+    ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
@@ -501,7 +473,7 @@ enum AIBackendClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": openAIModel,
-            "service_tier": "fast",
+            "service_tier": serviceTier,
             "stream": partialResult != nil,
             "instructions": instructions,
             "reasoning": [
@@ -545,6 +517,24 @@ enum AIBackendClient {
             throw AIBackendError.missingAPIKey("Claude")
         }
 
+        // Fast mode has its own capacity, so fall back to standard speed when it runs out.
+        do {
+            return try await claudeResponse(apiKey: apiKey, instructions: instructions, prompt: prompt, image: image, fast: true, status: status, partialResult: partialResult)
+        } catch AIBackendError.capacityUnavailable {
+            aiBackendLogger.info("Claude fast mode unavailable; retrying at standard speed")
+            return try await claudeResponse(apiKey: apiKey, instructions: instructions, prompt: prompt, image: image, fast: false, status: status, partialResult: partialResult)
+        }
+    }
+
+    private static func claudeResponse(
+        apiKey: String,
+        instructions: String,
+        prompt: String,
+        image: UploadImage?,
+        fast: Bool,
+        status: StatusHandler?,
+        partialResult: PartialResultHandler?
+    ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
@@ -566,7 +556,7 @@ enum AIBackendClient {
         }
         content.append(["type": "text", "text": prompt])
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "model": claudeModel,
             // Thinking counts against max_tokens.
             "max_tokens": 16000,
@@ -581,7 +571,11 @@ enum AIBackendClient {
                     "content": content
                 ]
             ]
-        ])
+        ]
+        if fast {
+            body["speed"] = "fast"
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         guard let partialResult else {
             let data = try await responseData(for: request, provider: "Claude Opus 5.5", status: status)
@@ -637,9 +631,7 @@ enum AIBackendClient {
             for try await byte in bytes {
                 errorData.append(byte)
             }
-            throw AIBackendError.requestFailed(
-                errorMessage(from: errorData) ?? "HTTP \(httpResponse.statusCode)"
-            )
+            throw failure(statusCode: httpResponse.statusCode, body: errorData)
         }
 
         var accumulatedOutput = ""
@@ -679,10 +671,15 @@ enum AIBackendClient {
         aiBackendLogger.info("\(provider, privacy: .public) request completed; status=\(httpResponse.statusCode, privacy: .public), bytes=\(data.count, privacy: .public)")
 
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw AIBackendError.requestFailed(errorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)")
+            throw failure(statusCode: httpResponse.statusCode, body: data)
         }
 
         return data
+    }
+
+    private static func failure(statusCode: Int, body: Data) -> AIBackendError {
+        let message = errorMessage(from: body) ?? "HTTP \(statusCode)"
+        return statusCode == 429 || statusCode == 529 ? .capacityUnavailable(message) : .requestFailed(message)
     }
 
     private static func errorMessage(from data: Data) -> String? {
@@ -823,6 +820,7 @@ enum AIBackendError: Error, LocalizedError {
     case modelUnavailable
     case privateCloudComputeUnavailable
     case dailyLimitReached
+    case capacityUnavailable(String)
     case requestFailed(String)
 
     var errorDescription: String? {
@@ -841,7 +839,7 @@ enum AIBackendError: Error, LocalizedError {
             return "Apple Private Cloud Compute is unavailable. It needs iOS 27, an Apple Intelligence device, and a network connection."
         case .dailyLimitReached:
             return "You've reached today's Apple Private Cloud Compute limit. Try again tomorrow or choose another backend."
-        case .requestFailed(let message):
+        case .capacityUnavailable(let message), .requestFailed(let message):
             return message
         }
     }
