@@ -210,7 +210,8 @@ private enum AIBackendCredentialStore {
 
 enum AIBackendClient {
     private static let openAIModel = "gpt-5.6-sol"
-    private static let claudeModel = "claude-fable-5-thinking-high"
+    private static let claudeModel = "claude-fable-5"
+    private static let claudeRefusalMessage = "Claude declined to analyze this content."
     typealias StatusHandler = @Sendable (String) -> Void
     typealias PartialResultHandler = @Sendable (String) async -> Void
 
@@ -555,7 +556,8 @@ enum AIBackendClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": claudeModel,
-            "max_tokens": 4096,
+            // Fable 5 always thinks, and thinking counts against max_tokens.
+            "max_tokens": 16000,
             "stream": partialResult != nil,
             "system": instructions,
             "messages": [
@@ -577,13 +579,26 @@ enum AIBackendClient {
             status: status,
             partialResult: partialResult
         ) { event in
-            guard event["type"] as? String == "content_block_delta",
-                  let delta = event["delta"] as? [String: Any],
-                  delta["type"] as? String == "text_delta"
-            else {
+            switch event["type"] as? String {
+            case "error":
+                let error = event["error"] as? [String: Any]
+                throw AIBackendError.requestFailed(error?["message"] as? String ?? "Claude stopped responding.")
+            case "message_delta":
+                let delta = event["delta"] as? [String: Any]
+                if delta?["stop_reason"] as? String == "refusal" {
+                    throw AIBackendError.requestFailed(claudeRefusalMessage)
+                }
+                return nil
+            case "content_block_delta":
+                guard let delta = event["delta"] as? [String: Any],
+                      delta["type"] as? String == "text_delta"
+                else {
+                    return nil
+                }
+                return delta["text"] as? String
+            default:
                 return nil
             }
-            return delta["text"] as? String
         }
     }
 
@@ -592,7 +607,7 @@ enum AIBackendClient {
         provider: String,
         status: StatusHandler?,
         partialResult: PartialResultHandler,
-        extractDelta: ([String: Any]) -> String?
+        extractDelta: ([String: Any]) throws -> String?
     ) async throws -> String {
         status?("Waiting for \(provider)...")
         aiBackendLogger.info("Starting streaming \(provider, privacy: .public) request")
@@ -623,7 +638,7 @@ enum AIBackendClient {
             guard !payload.isEmpty, payload != "[DONE]",
                   let data = payload.data(using: .utf8),
                   let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let delta = extractDelta(event),
+                  let delta = try extractDelta(event),
                   !delta.isEmpty
             else {
                 continue
@@ -705,6 +720,10 @@ enum AIBackendClient {
               let content = object["content"] as? [[String: Any]]
         else {
             throw AIBackendError.invalidResponse
+        }
+
+        if object["stop_reason"] as? String == "refusal" {
+            throw AIBackendError.requestFailed(claudeRefusalMessage)
         }
 
         let chunks = content.compactMap { item in

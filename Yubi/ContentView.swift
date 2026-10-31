@@ -885,19 +885,18 @@ struct ContentView: View {
             return
         }
 
-        // While a run is in flight, always keep the detail on that analysis so the
-        // previous session cannot stick on screen after an Action Button launch.
-        if analysisStatus.phase == .running {
+        // Open each run once so an Action Button launch lands on it, then leave
+        // navigation to the user so they can always back out of a slow or failing run.
+        if !autoNavigatedAnalysisIDs.contains(analysisID) {
+            autoNavigatedAnalysisIDs.insert(analysisID)
             presentAnalysis(analysisID)
-            return
         }
 
-        guard !autoNavigatedAnalysisIDs.contains(analysisID) else {
-            return
+        // A finished run has been shown, so don't reopen it on every launch.
+        if analysisStatus.phase != .running {
+            ScreenshotAnalysisStatusStore.markIdle()
+            analysisStatus = .idle
         }
-
-        autoNavigatedAnalysisIDs.insert(analysisID)
-        presentAnalysis(analysisID)
     }
 
     private func presentAnalysis(_ analysisID: UUID) {
@@ -983,7 +982,7 @@ struct ContentView: View {
                         || analysis.imageFilename != nil
                 )
                 && !resumingAnalysisIDs.contains(analysis.id)
-                && !(currentStatus.phase == .failed && currentStatus.analysisID == analysis.id)
+                && analysis.failureMessage == nil
         }
 
         guard let analysis = pendingAnalyses.first(where: { $0.id == currentStatus.analysisID }) ?? pendingAnalyses.first else {
@@ -1042,6 +1041,17 @@ struct ContentView: View {
             } catch {
                 notificationAuthorizationTask.cancel()
                 let message = AppCopy.analysisFailedMessage(error)
+                // Record the failure on the analysis itself so it is never auto-retried.
+                let latest = ScreenshotAnalysisStore.loadHistory().first { $0.id == analysis.id } ?? analysis
+                ScreenshotAnalysisStore.save(ScreenshotAnalysis(
+                    id: analysis.id,
+                    date: analysis.date,
+                    detectedText: latest.detectedText,
+                    result: latest.result,
+                    imageFilename: analysis.imageFilename,
+                    isComplete: false,
+                    failureMessage: message
+                ))
                 ScreenshotAnalysisStatusStore.markFailed(message, analysisID: analysis.id)
 
                 await MainActor.run {
@@ -2174,7 +2184,11 @@ private struct AnalysisHistoryCard: View {
             thumbnail
 
             HStack(alignment: .top, spacing: 10) {
-                if !analysis.isComplete {
+                if analysis.failureMessage != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .padding(.top, 2)
+                } else if !analysis.isComplete {
                     ProgressView()
                         .padding(.top, 2)
                 }
@@ -2213,6 +2227,10 @@ private struct AnalysisHistoryCard: View {
     }
 
     private var cardText: String {
+        if let failureMessage = analysis.failureMessage {
+            return failureMessage
+        }
+
         if !analysis.isComplete {
             return analysis.detectedText.isEmpty ? AppCopy.waitingForTranscript : analysis.detectedText
         }
@@ -2383,13 +2401,7 @@ private struct AnalysisDetailView: View {
     }
 
     private var analysisFailureMessage: String {
-        guard analysisStatus.phase == .failed,
-              analysisStatus.analysisID == analysisID
-        else {
-            return AppCopy.analysisStoppedBody
-        }
-
-        return analysisStatus.message ?? AppCopy.analysisStoppedBody
+        analysis?.failureMessage ?? AppCopy.analysisStoppedBody
     }
 
     @ViewBuilder

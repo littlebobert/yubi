@@ -14,14 +14,16 @@ struct ScreenshotAnalysis: Codable, Equatable, Identifiable {
     let result: String
     let imageFilename: String?
     let isComplete: Bool
+    let failureMessage: String?
 
-    init(id: UUID = UUID(), date: Date, detectedText: String, result: String, imageFilename: String? = nil, isComplete: Bool = true) {
+    init(id: UUID = UUID(), date: Date, detectedText: String, result: String, imageFilename: String? = nil, isComplete: Bool = true, failureMessage: String? = nil) {
         self.id = id
         self.date = date
         self.detectedText = detectedText
         self.result = result
         self.imageFilename = imageFilename
         self.isComplete = isComplete
+        self.failureMessage = failureMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +34,7 @@ struct ScreenshotAnalysis: Codable, Equatable, Identifiable {
         self.result = try container.decode(String.self, forKey: .result)
         self.imageFilename = try container.decodeIfPresent(String.self, forKey: .imageFilename)
         self.isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? true
+        self.failureMessage = try container.decodeIfPresent(String.self, forKey: .failureMessage)
     }
 
     var summary: String {
@@ -283,6 +286,10 @@ enum ScreenshotAnalysisStatusStore {
             updatedAt: Date(),
             message: message
         ))
+    }
+
+    static func markIdle() {
+        save(.idle)
     }
 
     private static func save(_ status: ScreenshotAnalysisStatus) {

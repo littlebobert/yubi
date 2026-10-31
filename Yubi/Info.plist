@@ -41,8 +41,6 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>YubiKeychainAccessGroup</key>
-	<string>$(AppIdentifierPrefix)com.justin.yubi.shared</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -63,5 +61,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>YubiKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.justin.yubi.shared</string>
 </dict>
 </plist>
