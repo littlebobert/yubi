@@ -53,7 +53,7 @@ base64 -i ~/Downloads/Yubi_Keyboard.mobileprovision | pbcopy
 
 1. Commit/push the workflow + project signing settings if you have not already.
 2. Actions → **TestFlight** → Run workflow  
-   Optional: `marketing_version`, `xcode_version` (must stay non-beta).
+   Optional: `marketing_version`, `xcode_version` (must stay non-beta, and 27 or later: older Xcode compiles out Private Cloud Compute).
 3. Or push a tag: `v1.0.1`.
 
 Build number is chosen automatically as:

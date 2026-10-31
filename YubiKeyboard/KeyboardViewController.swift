@@ -241,13 +241,13 @@ final class KeyboardViewController: UIInputViewController {
                 return KeyboardCopy.useAppForPrivateCloudCompute
             case .openAI:
                 return "Translation sends selected text to OpenAI."
-            case .claudeFable:
+            case .claudeOpus:
                 return localized(
-                    en: "Translation sends selected text to Claude Fable 5 using your API key.",
-                    ja: "翻訳では、選択したテキストをあなたのAPIキーでClaude Fable 5に送信します。",
-                    zhHans: "翻译会使用你的 API 密钥将所选文本发送到 Claude Fable 5。",
-                    zhHant: "翻譯會使用你的 API 金鑰將選取文字傳送到 Claude Fable 5。",
-                    ko: "번역은 선택한 텍스트를 사용자의 API 키로 Claude Fable 5에 보냅니다."
+                    en: "Translation sends selected text to Claude Opus 5.5 using your API key.",
+                    ja: "翻訳では、選択したテキストをあなたのAPIキーでClaude Opus 5.5に送信します。",
+                    zhHans: "翻译会使用你的 API 密钥将所选文本发送到 Claude Opus 5.5。",
+                    zhHant: "翻譯會使用你的 API 金鑰將選取文字傳送到 Claude Opus 5.5。",
+                    ko: "번역은 선택한 텍스트를 사용자의 API 키로 Claude Opus 5.5에 보냅니다."
                 )
             }
         }
@@ -1452,7 +1452,7 @@ final class KeyboardViewController: UIInputViewController {
             guard !AIBackendSettings.openAIAPIKey.isEmpty else {
                 throw KeyboardTranslationError.missingAPIKey
             }
-        case .claudeFable:
+        case .claudeOpus:
             guard hasFullAccess else {
                 throw KeyboardTranslationError.fullAccessRequired
             }

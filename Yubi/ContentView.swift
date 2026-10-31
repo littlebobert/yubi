@@ -503,7 +503,7 @@ struct ContentView: View {
                 Text(AppCopy.openAIModelNote)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else if selectedAIBackend == .claudeFable {
+            } else if selectedAIBackend == .claudeOpus {
                 HStack(spacing: 10) {
                     SecureField(AppCopy.claudeAPIKeyPlaceholder, text: $claudeAPIKey)
                         .focused($focusedAPIKeyField, equals: .claude)
@@ -1440,8 +1440,8 @@ private enum AppCopy {
             )
         case .openAI:
             return "OpenAI"
-        case .claudeFable:
-            return "Claude Fable 5"
+        case .claudeOpus:
+            return "Claude Opus 5.5"
         }
     }
 
@@ -1480,7 +1480,7 @@ private enum AppCopy {
                 zhHant: "均衡",
                 ko: "균형형"
             )
-        case .claudeFable:
+        case .claudeOpus:
             return localized(
                 en: "strongest, most expensive",
                 ja: "最も強力で、最も高価",

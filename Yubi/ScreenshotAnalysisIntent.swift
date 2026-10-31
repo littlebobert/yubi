@@ -65,7 +65,18 @@ public struct AnalyzeImageIntent: AppIntent {
             screenshotIntentLogger.info("Analyze Image intent saved pending result; detectedCharacters=\(detectedText.count, privacy: .public)")
             return .result()
         } catch {
-            ScreenshotAnalysisStatusStore.markFailed("Analysis failed", analysisID: analysisID)
+            let message = (error as? ScreenshotAnalysisError).map { String(localized: $0.localizedStringResource) } ?? "Analysis failed"
+            // Record the failure on the analysis itself so it is never auto-retried.
+            ScreenshotAnalysisStore.save(ScreenshotAnalysis(
+                id: analysisID,
+                date: Date(),
+                detectedText: "",
+                result: "",
+                imageFilename: imageFilename,
+                isComplete: false,
+                failureMessage: message
+            ))
+            ScreenshotAnalysisStatusStore.markFailed(message, analysisID: analysisID)
             screenshotIntentLogger.error("Analyze Image intent failed: \(String(describing: error), privacy: .public)")
             throw error
         }

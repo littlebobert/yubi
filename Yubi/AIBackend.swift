@@ -19,7 +19,8 @@ enum AIBackend: String, CaseIterable, Identifiable {
     case apple
     case applePCC
     case openAI
-    case claudeFable
+    // Keeps its original raw value so existing saved selections still load.
+    case claudeOpus = "claudeFable"
 
     var id: String {
         rawValue
@@ -33,8 +34,8 @@ enum AIBackend: String, CaseIterable, Identifiable {
             return "Apple Private Cloud Compute"
         case .openAI:
             return "OpenAI"
-        case .claudeFable:
-            return "Claude Fable 5"
+        case .claudeOpus:
+            return "Claude Opus 5.5"
         }
     }
 
@@ -46,7 +47,7 @@ enum AIBackend: String, CaseIterable, Identifiable {
             return "private and free, with a daily limit"
         case .openAI:
             return "balanced"
-        case .claudeFable:
+        case .claudeOpus:
             return "strongest, most expensive"
         }
     }
@@ -57,7 +58,7 @@ enum AIBackend: String, CaseIterable, Identifiable {
             return false
         case .applePCC:
             return AIBackendClient.isPrivateCloudComputeSupported
-        case .openAI, .claudeFable:
+        case .openAI, .claudeOpus:
             return true
         }
     }
@@ -80,14 +81,24 @@ enum AIBackendSettings {
                   let backend = AIBackend(rawValue: rawValue),
                   backend.isAvailable
             else {
-                return .openAI
+                return defaultBackend
             }
 
             return backend
         }
         set {
-            userDefaults.set((newValue.isAvailable ? newValue : .openAI).rawValue, forKey: backendKey)
+            userDefaults.set((newValue.isAvailable ? newValue : defaultBackend).rawValue, forKey: backendKey)
         }
+    }
+
+    private static var defaultBackend: AIBackend {
+        // OpenAI used to be the default and wasn't saved until the user picked another
+        // backend, so an OpenAI key with no saved choice means they're already using OpenAI.
+        guard AIBackend.applePCC.isAvailable, openAIAPIKey.isEmpty else {
+            return .openAI
+        }
+
+        return .applePCC
     }
 
     static var openAIAPIKey: String {
@@ -210,7 +221,7 @@ private enum AIBackendCredentialStore {
 
 enum AIBackendClient {
     private static let openAIModel = "gpt-5.6-sol"
-    private static let claudeModel = "claude-fable-5"
+    private static let claudeModel = "claude-opus-5-5"
     private static let claudeRefusalMessage = "Claude declined to analyze this content."
     typealias StatusHandler = @Sendable (String) -> Void
     typealias PartialResultHandler = @Sendable (String) async -> Void
@@ -276,10 +287,10 @@ enum AIBackendClient {
                 status: status,
                 partialResult: partialResult
             )
-        case .claudeFable:
-            status?("Preparing image for Claude Fable 5...")
+        case .claudeOpus:
+            status?("Preparing image for Claude Opus 5.5...")
             let image = try uploadImage(from: cgImage)
-            status?("Claude Fable 5 is analyzing the image...")
+            status?("Claude Opus 5.5 is analyzing the image...")
             return try await claudeResponse(
                 instructions: instructions,
                 prompt: prompt,
@@ -341,8 +352,8 @@ enum AIBackendClient {
                 status: status,
                 partialResult: partialResult
             )
-        case .claudeFable:
-            status?("Claude Fable 5 is analyzing the text...")
+        case .claudeOpus:
+            status?("Claude Opus 5.5 is analyzing the text...")
             return try await claudeResponse(
                 instructions: instructions,
                 prompt: prompt,
@@ -539,6 +550,7 @@ enum AIBackendClient {
         request.timeoutInterval = 180
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var content: [[String: Any]] = []
@@ -556,8 +568,11 @@ enum AIBackendClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": claudeModel,
-            // Fable 5 always thinks, and thinking counts against max_tokens.
+            // Thinking counts against max_tokens.
             "max_tokens": 16000,
+            "thinking": ["type": "adaptive"],
+            "output_config": ["effort": "medium"],
+            "fallbacks": "default",
             "stream": partialResult != nil,
             "system": instructions,
             "messages": [
@@ -569,13 +584,13 @@ enum AIBackendClient {
         ])
 
         guard let partialResult else {
-            let data = try await responseData(for: request, provider: "Claude Fable 5", status: status)
+            let data = try await responseData(for: request, provider: "Claude Opus 5.5", status: status)
             return try nonEmptyCleanedOutput(extractClaudeText(from: data))
         }
 
         return try await streamedResponse(
             for: request,
-            provider: "Claude Fable 5",
+            provider: "Claude Opus 5.5",
             status: status,
             partialResult: partialResult
         ) { event in
